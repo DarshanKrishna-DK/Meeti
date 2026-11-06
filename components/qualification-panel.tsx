@@ -12,6 +12,7 @@ type Qualification = {
   messages: { id: string; speaker: string; content: string; createdAt: string; round: number; evidence: Citation[] }[];
   questions: { id: string; question: string; answered: boolean }[];
   proposalId?: string | null; failureCode?: string | null;
+  canRetry?: boolean; attemptsUsed?: number; maxAttempts?: number;
 };
 type AnswerDraft = { text: string; fieldClass: '' | 'seeking' | 'offering' | 'bio'; providerConsent: boolean; counterpartConsent: boolean };
 const emptyAnswer = (): AnswerDraft => ({ text: '', fieldClass: '', providerConsent: false, counterpartConsent: false });
@@ -79,12 +80,13 @@ function OwnerQualificationPanel({ state, run, busy }: Shared) {
     {loading ? <p role="status">Loading your agent conversations...</p> : !items.length ? <div className={styles.empty}><MessageCircle size={23} /><p>No qualification conversations yet. Explore a live candidate to start one.</p><Link href="/discover" className="text-link">Find a connection<ArrowUpRight size={14} /></Link></div> : <div className={styles.documents}>
       {items.map(item => {
         const unanswered = item.questions.filter(question => !question.answered);
-        const finished = ['qualified', 'not_aligned', 'round_limit', 'cancelled', 'failed', 'blocked', 'proposed'].includes(item.state);
+        const finished = !item.canRetry && ['qualified', 'not_aligned', 'round_limit', 'cancelled', 'failed', 'blocked', 'proposed'].includes(item.state);
         return <article key={item.id} className={styles.document}>
           <header><div><h3>{item.otherEns}</h3><small>Conversation revision {item.version}</small></div><Tag good={Boolean(item.proposalId)}>{stateNames[item.state] || item.state.replaceAll('_', ' ')}</Tag></header>
           <p>{item.summary}</p>
           {item.stopReason && <p className="small-copy">Review outcome: {item.stopReason.replaceAll('_', ' ')}.</p>}
           {item.failureCode && <p role="status" className={styles.notice}>The review stopped ({item.failureCode}). No replacement decision has been assumed.</p>}
+          {item.canRetry && <p className="small-copy">You can explicitly retry the unfinished turn after permissions are checked again. Failed requests count toward the limit. {item.attemptsUsed || 0} of {item.maxAttempts || 6} model requests have been reserved.</p>}
           <div className="thread" aria-label={`Agent conversation with ${item.otherEns}`}>
             {item.messages.length ? item.messages.map(message => <article className="exchange-message" key={message.id}>
               <div><strong>{message.speaker}</strong><small>Round {message.round}</small></div><p>{message.content}</p>
@@ -102,7 +104,7 @@ function OwnerQualificationPanel({ state, run, busy }: Shared) {
                   await api(`qualifications/${item.id}/answer`, { version: item.version, questionId: question.id, text: draft.text.trim(), fieldClass: draft.fieldClass, providerDisclosureConsent: true, shareWithCounterpart: true });
                   if (alive.current) setDrafts(current => { const next = { ...current }; delete next[question.id]; return next; });
                 }, 'Your answer was saved with your sharing choices.');
-              }}><fieldset className={styles.fieldset} disabled={busy || pending || finished || question.answered}>
+              }}><fieldset className={styles.fieldset} disabled={busy || pending || item.state !== 'needs_owner' || question.answered}>
                 {question.answered ? <><p>{question.question}</p><Tag good>Answer recorded</Tag></> : <>
                   <Field label={question.question}><textarea rows={3} maxLength={1500} required value={draft.text} onChange={event => update(question.id, { text: event.target.value, providerConsent: false, counterpartConsent: false })} /></Field>
                   <Field label="This answer describes"><select value={draft.fieldClass} required onChange={event => update(question.id, { fieldClass: event.target.value as AnswerDraft['fieldClass'], providerConsent: false, counterpartConsent: false })}><option value="">Choose the matching profile permission</option><option value="seeking">What I seek</option><option value="offering">What I offer</option><option value="bio">My professional context</option></select></Field>
@@ -116,6 +118,7 @@ function OwnerQualificationPanel({ state, run, busy }: Shared) {
           <div className={styles.toolbar}>
             {item.proposalId && state.proposals.some(proposal => proposal.id === item.proposalId) && <Link href="/approvals" className="button">Review introduction<ArrowUpRight size={15} /></Link>}
             {item.state === 'needs_owner' && <Button disabled={busy || pending || unanswered.length > 0} onClick={() => void perform(() => api(`qualifications/${item.id}/resume`, { version: item.version }))}>Check answers and continue</Button>}
+            {item.canRetry && <Button disabled={busy || pending} onClick={() => void perform(() => api(`qualifications/${item.id}/retry`, { version: item.version }))}>Retry unfinished review</Button>}
             {!finished && <Button kind="secondary" disabled={busy || pending} onClick={() => void perform(() => api(`qualifications/${item.id}/cancel`, { version: item.version }), 'This agent conversation has been cancelled.')}>Cancel this conversation</Button>}
           </div>
         </article>;

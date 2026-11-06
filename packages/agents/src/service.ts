@@ -239,12 +239,13 @@ export class MeetiAgentService {
     const evidence: Evidence[] = [
       { reference: `${owner.agentId}:intent:summary`, value: owner.intent.summary },
       { reference: `${owner.agentId}:intent:tags`, value: owner.intent.tags.join(", ") },
+      ...(owner.intent.direction ? [{ reference: `${owner.agentId}:intent:direction`, value: owner.intent.direction }] : []),
     ];
     for (const field of owner.fields) {
       if (receipt.allowedFieldIds.includes(field.id) && (field.visibility === "public" || field.providerAllowed === true)) {
         evidence.push({ reference: `${owner.agentId}:field:${field.id}`, value: `${field.label}: ${field.value}` });
       }
     }
-    return { projection: { agentId: owner.agentId, intentId: owner.intent.id, intentVersion: owner.intent.version, goal: owner.intent.goal, evidence }, receipt };
+    return { projection: { agentId: owner.agentId, intentId: owner.intent.id, intentVersion: owner.intent.version, goal: owner.intent.goal, ...(owner.intent.direction ? { direction: owner.intent.direction } : {}), evidence }, receipt };
   }
 }

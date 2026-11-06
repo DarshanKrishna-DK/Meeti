@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   MeetiAgentService, OpenAICompatibleProvider, QUALIFICATION_RUBRICS,
-  type AgentParticipant, type PolicyAuthorizer, type QualificationOwnerAnswer, type StructuredProvider,
+  type AgentParticipant, type PolicyAuthorizer, type QualificationCheckpoint, type QualificationOwnerAnswer, type StructuredProvider,
 } from "../src";
 
 const participant = (id: string): AgentParticipant => ({
@@ -44,10 +44,52 @@ function fixtureProvider(generate: (data: TurnData, index: number) => unknown) {
 const input = () => ({ left: participant("a"), right: participant("b"), purpose: "collaborator" });
 
 describe("bounded actual-provider qualification with test-only fixtures", () => {
+  it('resumes a saved first turn with fresh projections and does not repeat its model request', async () => {
+    let attempts = 0, checkpoint: QualificationCheckpoint | undefined;
+    const transport = vi.fn<typeof fetch>(async (_url, init) => {
+      if (++attempts === 2) return new Response('{"error":{"code":"rate_limit_exceeded"}}', { status: 429 });
+      const data = JSON.parse(JSON.parse(String(init?.body)).messages[1].content).untrustedData;
+      return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(turn(data)) } }], usage: { prompt_tokens: 2, completion_tokens: 2 } }));
+    });
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://fixture.example/v1', apiKey: 'fixture', model: 'fixture', timeoutMs: 1000,
+      maxRequests: 6, maxCostUsd: 1, inputUsdPerMillion: 0, outputUsdPerMillion: 0, maxOutputTokens: 1200, maxInputBytes: 24000 }, transport);
+    const service = new MeetiAgentService(provider, authorize), pair = input();
+    const beforeInference = vi.fn((_reservation, value: QualificationCheckpoint) => { checkpoint = value; });
+    await expect(service.qualifyIntroduction({ ...pair, beforeInference })).rejects.toMatchObject({ code: 'provider', providerDetail: { status: 429 } });
+    expect(checkpoint!.messages).toHaveLength(1);
+    const firstId = checkpoint!.messages[0].id;
+    const result = await service.qualifyIntroduction({ ...pair, checkpoint, beforeInference });
+    expect(result.state).toBe('qualified'); expect(result.messages).toHaveLength(2); expect(result.messages[0].id).toBe(firstId);
+    expect(transport).toHaveBeenCalledTimes(3); expect(beforeInference).toHaveBeenCalledTimes(3);
+    const lastData = JSON.parse(JSON.parse(String(transport.mock.calls[2][1]?.body)).messages[1].content).untrustedData;
+    expect(lastData.self.agentId).toBe(pair.right.agentId);
+    const changed = structuredClone(pair); changed.left.intent.summary = 'Changed source';
+    await expect(service.qualifyIntroduction({ ...changed, checkpoint })).rejects.toMatchObject({ code: 'policy' });
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects a durable reservation before network transmission', async () => {
+    const transport = vi.fn<typeof fetch>();
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://fixture.example/v1', apiKey: 'fixture', model: 'fixture', timeoutMs: 1000,
+      maxRequests: 6, maxCostUsd: 1, inputUsdPerMillion: 0, outputUsdPerMillion: 0, maxOutputTokens: 1200, maxInputBytes: 24000 }, transport);
+    await expect(new MeetiAgentService(provider, authorize).qualifyIntroduction({ ...input(), beforeInference: () => { throw new Error('fixture quota exhausted'); } })).rejects.toThrow('fixture quota');
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('uses the explicit seek-help/offer-expertise scope without inventing a reciprocal work obligation', async () => {
+    const pair = input(); pair.left.intent.direction = 'seeking-help'; pair.right.intent.direction = 'offering-expertise';
+    const { provider } = fixtureProvider(data => {
+      const rubric = (data as TurnData & { rubric: { id: string }[] }).rubric;
+      expect(rubric.map(item => item.id)).toEqual(['help_goal', 'relevant_expertise', 'help_scope', 'constraints']);
+      const response = turn(data);
+      return { ...response, findings: rubric.map(criterion => ({ criterionId: criterion.id, status: 'supported', explanation: 'Fixture explicit scope references both owners.', evidenceReferences: response.evidence.map(item => item.reference) })) };
+    });
+    expect((await new MeetiAgentService(provider, authorize).qualifyIntroduction(pair)).state).toBe('qualified');
+  });
   it('selects recruiting criteria from the reviewed direction instead of treating a job as generic collaboration', async () => {
     const pair = input(); pair.left.intent.direction = 'seeking-job'; pair.right.intent.direction = 'hiring';
     const { provider } = fixtureProvider(data => {
       const rubric = (data as TurnData & { rubric: { id: string }[] }).rubric;
+      expect((data.self as { direction?: string }).direction).toBe(data.self.agentId === pair.left.agentId ? 'seeking-job' : 'hiring');
       expect(rubric.map(item => item.id)).toContain('role_relevance');
       expect(rubric.map(item => item.id)).not.toContain('reciprocal_contribution');
       const response = turn(data);
@@ -123,11 +165,34 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   it("stops after six actual completions and cannot extend its original total round cap", async () => {
     const fixture = fixtureProvider(data => ({ ...turn(data, true), ownerQuestions: [], peerQuestions: ["Can you clarify from your supplied context?"] }));
     const service = new MeetiAgentService(fixture.provider, authorize), pair = input();
-    const result = await service.qualifyIntroduction({ ...pair, maxRounds: 3 });
+    let result = await service.qualifyIntroduction({ ...pair, maxRounds: 3 });
+    expect(result.state).toBe('needs_owner');
+    expect(result.ownerQuestions.every(question => question.question.startsWith('Backend clarification:'))).toBe(true);
+    expect(fixture.calls).toHaveLength(2);
+    while (result.state === 'needs_owner') {
+      const pending = result.ownerQuestions.filter(question => !result.answers.some(answer => answer.questionId === question.id));
+      const ownerAnswers: QualificationOwnerAnswer[] = pending.map(question => {
+        const owner = question.ownerAgentId === pair.left.agentId ? pair.left : pair.right;
+        const fieldId = `answer:${question.id}`;
+        owner.fields.push({ id: fieldId, label: 'Own contribution clarification', value: 'I have not yet decided my contribution scope.', visibility: 'private', providerAllowed: true });
+        return { questionId: question.id, ownerAgentId: owner.agentId, fieldId, answeredAt: new Date().toISOString(), providerDisclosureConsent: true };
+      });
+      result = await service.qualifyIntroduction({ ...pair, priorState: result, ownerAnswers });
+    }
     expect(result).toMatchObject({ state: "round_limit", stopReason: "bounded_round_limit", round: 3 });
     expect(fixture.calls).toHaveLength(6);
     await expect(service.qualifyIntroduction({ ...pair, priorState: result })).rejects.toMatchObject({ code: "input" });
     expect(fixture.calls).toHaveLength(6);
+  });
+
+  it('turns a material unknown with no generated question into explicit owner tasks without creating a successful finding', async () => {
+    const fixture = fixtureProvider(data => ({ ...turn(data, true), ownerQuestions: [], peerQuestions: [] }));
+    const result = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input());
+    expect(result.state).toBe('needs_owner'); expect(result.ownerQuestions).toHaveLength(2);
+    expect(result.ownerQuestions.map(question => question.ownerAgentId).sort()).toEqual(['test-agent-a', 'test-agent-b']);
+    expect(result.ownerQuestions.every(question => question.criterionIds.includes('scope_expectations'))).toBe(true);
+    expect(result.messages.every(message => message.findings.find(finding => finding.criterionId === 'scope_expectations')?.status === 'unknown')).toBe(true);
+    expect(fixture.calls).toHaveLength(2);
   });
 
   it("treats unknown context differently from an explicit mismatch", async () => {

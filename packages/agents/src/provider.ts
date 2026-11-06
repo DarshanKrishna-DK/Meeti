@@ -4,11 +4,14 @@ export class AgentError extends Error {
   constructor(
     public readonly code: "configuration" | "budget" | "timeout" | "provider" | "output" | "policy" | "input",
     message: string,
+    public readonly providerDetail?: { status: number; code?: string },
   ) {
     super(message);
     this.name = "AgentError";
   }
 }
+
+export type InferenceReservation = { requestId: string; model: string; reservedCostUsd: number };
 
 export interface InferenceReceipt {
   requestId: string;
@@ -27,6 +30,7 @@ export interface StructuredProvider {
     instructions: string;
     data: unknown;
     outputSchema: z.ZodType<T>;
+    beforeInference?: (reservation: InferenceReservation) => void | Promise<void>;
   }): Promise<{ output: T; inference: InferenceReceipt }>;
 }
 
@@ -65,6 +69,48 @@ const responseSchema = z.object({
   }),
 });
 
+const providerErrorCodes = new Set([
+  "json_validate_failed", "rate_limit_exceeded", "insufficient_quota", "invalid_api_key",
+  "model_not_found", "model_decommissioned", "context_length_exceeded", "invalid_request_error",
+  "authentication_error", "permission_error", "server_error", "service_unavailable",
+]);
+
+/** Upstream messages can contain submitted context or failed generations. Retain only known codes. */
+async function readProviderErrorCode(response: Response): Promise<string | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return undefined;
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    if (Number(response.headers.get("content-length") ?? 0) > 16_384) return undefined;
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > 16_384) return undefined;
+      chunks.push(chunk.value);
+    }
+    const buffer = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(buffer));
+    if (!parsed || typeof parsed !== "object" || !("error" in parsed)) return undefined;
+    const error = parsed.error;
+    if (!error || typeof error !== "object") return undefined;
+    const details = error as Record<string, unknown>;
+    for (const field of ["code", "type"] as const) {
+      const value = details[field];
+      if (typeof value === "string" && providerErrorCodes.has(value)) return value;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  } finally {
+    try { await reader.cancel(); } catch { /* Cancellation cannot expose upstream diagnostics. */ }
+    reader.releaseLock();
+  }
+}
+
 const isolation = [
   "You process structured professional networking data and return exactly one JSON object.",
   "Serialize the final result as valid JSON only, with double-quoted property names and string values, escaped embedded quotes and line breaks, and no trailing commas. Do not add Markdown fences, comments, analysis, annotations, or surrounding text.",
@@ -98,6 +144,7 @@ export class OpenAICompatibleProvider implements StructuredProvider {
     instructions: string;
     data: unknown;
     outputSchema: z.ZodType<T>;
+    beforeInference?: (reservation: InferenceReservation) => void | Promise<void>;
   }): Promise<{ output: T; inference: InferenceReceipt }> {
     let responseFormat: { type: "json_object" } | { type: "json_schema"; json_schema: { name: string; strict: true; schema: unknown } } | undefined;
     // Operator-selected task formats are fixed before inference. Failures never select another format.
@@ -129,6 +176,8 @@ export class OpenAICompatibleProvider implements StructuredProvider {
     this.requests += 1;
     this.reservedCostUsd += reserve;
     const requestId = crypto.randomUUID();
+    // Durable callers reserve their own quota before any network action. Rejection never sends a request.
+    await request.beforeInference?.({ requestId, model: this.config.model, reservedCostUsd: reserve });
     const startedAt = new Date().toISOString();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
@@ -149,7 +198,10 @@ export class OpenAICompatibleProvider implements StructuredProvider {
         signal: controller.signal,
         redirect: "error",
       });
-      if (!response.ok) throw new AgentError("provider", `The AI provider returned HTTP ${response.status}.`);
+      if (!response.ok) {
+        const providerCode = await readProviderErrorCode(response);
+        throw new AgentError("provider", `The AI provider returned HTTP ${response.status}${providerCode ? ` (${providerCode})` : ""}.`, { status: response.status, ...(providerCode ? { code: providerCode } : {}) });
+      }
       if (Number(response.headers.get("content-length") ?? 0) > 128_000) throw new AgentError("output", "The AI response exceeded its size limit.");
       const reader = response.body?.getReader();
       if (!reader) throw new AgentError("output", "The AI provider returned an empty response.");

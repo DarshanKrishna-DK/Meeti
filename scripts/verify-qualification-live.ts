@@ -18,7 +18,7 @@ try {
   const participants: AgentParticipant[] = records.map(record => ({ userId: record.owner.toLowerCase(), agentId: record.intent.ensAgentRef,
     intent: { id: record.intent.intentId, version: record.intent.version, goal: record.intent.goal, direction: record.intent.semantics.direction,
       summary: record.intent.summary, tags: record.intent.tags, expiresAt: record.intent.expiresAt }, fields: [] }));
-  const provider = createProviderFromEnv({ ...process.env, AI_MAX_REQUESTS: '2', AI_MAX_COST_USD: '0.05' });
+  const provider = createProviderFromEnv({ ...process.env, AI_MAX_REQUESTS: '6', AI_MAX_COST_USD: '0.05' });
   const service = new MeetiAgentService(provider, async request => {
     const index = namespaces.findIndex(namespace => namespace.owner.toLowerCase() === request.actorId);
     if (index < 0) throw new Error('Unknown test publication owner.');
@@ -29,10 +29,12 @@ try {
     return { allowed: true, reason: 'Live Sepolia ENS authority for the approved fictional Arkiv publication.', policyVersion: 1,
       allowedFieldIds: [], checkedAt: new Date().toISOString(), expiresAt: new Date(Math.min(...records.map(record => Date.parse(record.intent.expiresAt)))).toISOString() };
   });
-  const result = await service.qualifyIntroduction({ left: participants[0], right: participants[1], purpose: 'collaborator', maxRounds: 1,
+  const result = await service.qualifyIntroduction({ left: participants[0], right: participants[1], purpose: 'collaborator', maxRounds: 3,
     onProgress: event => { if (event.kind === 'turn_completed') evidence.push({ kind: event.kind, inference: event.message.inference }); } });
   const report = { checkedAt: new Date().toISOString(), scope: 'Live Arkiv read, current ENS authorization, and actual model qualification. Not application inbox or independent-human E2E.',
     keys, state: result.state, stopReason: result.stopReason, messages: result.messages.length, questions: result.ownerQuestions.length,
+    // This driver supplies only the previously approved public fictional intents, never private profile context.
+    rubric: result.rubric, publicDialogue: result.messages, ownerQuestions: result.ownerQuestions,
     receipts: result.messages.map(message => message.inference), authority: evidence };
   mkdirSync('artifacts', { recursive: true }); writeFileSync('artifacts/qualification-live.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

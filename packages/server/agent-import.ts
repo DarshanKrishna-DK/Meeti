@@ -26,7 +26,10 @@ export async function handleAgentImport(request: Request, key: string, body: unk
   const rpcUrl = process.env.ENS_SEPOLIA_AUTH_RPC_URL || process.env.ENS_SEPOLIA_RPC_URL;
   if (!rpcUrl) throw new HttpError(503, 'ENS_UNCONFIGURED', 'The ENS connection is not configured.');
   const provider = createEnsAuthorityProvider({ rpcUrl });
-  const result = await provider.checkAuthority({ ensName: input.ensName, owner: actor.wallet, delegate: input.delegate, action: 'discover' });
+  const result = await (async () => {
+    try { return await provider.checkAuthority({ ensName: input.ensName, owner: actor.wallet!, delegate: input.delegate, action: 'discover' }); }
+    finally { await provider.disconnect(); }
+  })();
   const currentActor = requireUser(request);
   if (currentActor.id !== actor.id || currentActor.wallet?.toLowerCase() !== actor.wallet.toLowerCase()) {
     throw new HttpError(403, 'ACCOUNT_CHANGED', 'Your authenticated owner account changed. Review the identity again.');

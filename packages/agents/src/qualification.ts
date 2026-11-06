@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { AgentError, type StructuredProvider } from "./provider";
+import { AgentError, type InferenceReservation, type StructuredProvider } from "./provider";
 import type { AgentParticipant, DisclosureCheck, PolicyReceipt } from "./service";
 
 const shortText = z.string().trim().min(1).max(700);
@@ -102,6 +102,10 @@ export const qualificationResultSchema = z.object({
   disclosureChecks: z.array(disclosureCheckSchema).max(18), createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
 }).strict();
 export type QualificationResult = z.infer<typeof qualificationResultSchema>;
+export const qualificationCheckpointSchema = qualificationResultSchema.omit({ state: true, stopReason: true }).extend({
+  messages: z.array(messageSchema).max(6),
+}).strict();
+export type QualificationCheckpoint = z.infer<typeof qualificationCheckpointSchema>;
 export type QualificationMessage = z.infer<typeof messageSchema>;
 export type QualificationOwnerQuestion = z.infer<typeof ownerQuestionSchema>;
 export type QualificationOwnerAnswer = z.infer<typeof answerSchema>;
@@ -110,8 +114,10 @@ export type QualificationProgress = {
   round: number; maxRounds: number;
   participantBindings: QualificationResult["participantBindings"];
   message: QualificationMessage; ownerQuestions: QualificationOwnerQuestion[]; policyChecks: PolicyReceipt[];
+  checkpoint?: QualificationCheckpoint;
 } | {
   kind: "disclosure_checked"; qualificationId: string; schemaVersion: 1; check: DisclosureCheck;
+  checkpoint?: QualificationCheckpoint;
 } | {
   kind: "state_completed"; qualificationId: string; schemaVersion: 1; result: QualificationResult;
 };
@@ -119,6 +125,9 @@ export interface QualificationInput {
   left: AgentParticipant; right: AgentParticipant; purpose: string; maxRounds?: 1 | 2 | 3;
   /** Read only from authenticated, tenant-scoped server persistence. Never accept a client-authored transcript. */
   priorState?: QualificationResult;
+  /** Encrypted server checkpoint only. Interrupted turns resume without repeating completed messages. */
+  checkpoint?: QualificationCheckpoint;
+  beforeInference?: (reservation: InferenceReservation, checkpoint: QualificationCheckpoint) => void | Promise<void>;
   /** Answer text exists only in an independently authorized current participant field. */
   ownerAnswers?: QualificationOwnerAnswer[];
   /** Server-only durable persistence callback. It is awaited before another actual provider call. */
@@ -126,6 +135,7 @@ export interface QualificationInput {
 }
 export interface QualificationProjection {
   agentId: string; intentId: string; intentVersion: number; goal: AgentParticipant["intent"]["goal"];
+  direction?: AgentParticipant["intent"]["direction"];
   evidence: { reference: string; value: string }[];
 }
 interface QualificationDependencies {
@@ -178,17 +188,36 @@ export async function runQualification(provider: StructuredProvider, input: Qual
   if (left.intent.goal !== right.intent.goal) fail("Qualification requires the same reviewed networking category for both owners.");
   const purpose = z.string().trim().min(1).max(200).safeParse(input.purpose);
   if (!purpose.success) fail("Qualification requires a bounded purpose.");
-  const maxRounds = input.maxRounds ?? input.priorState?.maxRounds ?? 3;
+  const maxRounds = input.maxRounds ?? input.checkpoint?.maxRounds ?? input.priorState?.maxRounds ?? 3;
   if (![1, 2, 3].includes(maxRounds)) fail("Qualification permits at most three rounds in total.");
   const jobPair = [left.intent.direction, right.intent.direction].includes('seeking-job') && [left.intent.direction, right.intent.direction].includes('hiring');
+  const helpPair = [left.intent.direction, right.intent.direction].includes('seeking-help') && [left.intent.direction, right.intent.direction].includes('offering-expertise');
   const rubric = (jobPair ? [
     { id: 'role_relevance', description: 'The explicitly offered role and the job seeker stated professional interests fit both owners. Do not invent a vacancy or experience.', essential: true },
     { id: 'required_evidence', description: 'Explicit mandatory role requirements have relevant self-claimed evidence. Missing evidence remains unknown and self-claims are not verified credentials.', essential: true },
     { id: 'mutual_expectations', description: 'The owners explicitly state sufficiently compatible recruiting and job-seeking expectations. Do not invent compensation, employment terms or commitments.', essential: true },
     { id: 'constraints', description: 'Explicit location, availability, seniority or compensation constraints are compatible; missing optional terms remain unknown.', essential: false },
+  ] : helpPair ? [
+    { id: 'help_goal', description: 'The explicitly requested help and offered expertise concern a mutually relevant objective.', essential: true },
+    { id: 'relevant_expertise', description: 'The offering owner explicitly claims expertise relevant to the requested help. This is a self-claim, never an independently verified credential.', essential: true },
+    { id: 'help_scope', description: 'The explicitly requested and offered help scopes fit without assuming compensation, reciprocal work or an ongoing mentorship obligation.', essential: true },
+    { id: 'constraints', description: 'Explicit constraints fit. Missing optional location or availability is unknown, not an assumed conflict.', essential: false },
   ] : QUALIFICATION_RUBRICS[left.intent.goal]).map(criterion => ({ ...criterion }));
   const participantBindings = [binding(left), binding(right)] as const;
   let prior: QualificationResult | undefined;
+  let checkpoint: QualificationCheckpoint | undefined;
+  if (input.checkpoint) {
+    if (input.priorState) fail("Use one stored qualification continuation only.");
+    const parsed = qualificationCheckpointSchema.safeParse(input.checkpoint);
+    if (!parsed.success) fail("The stored interrupted qualification is invalid.");
+    checkpoint = parsed.data;
+    if (checkpoint.purpose !== purpose.data || JSON.stringify(checkpoint.participantBindings) !== JSON.stringify(participantBindings)
+      || JSON.stringify(checkpoint.rubric) !== JSON.stringify(rubric) || checkpoint.maxRounds !== maxRounds
+      || checkpoint.messages.length < (checkpoint.round - 1) * 2 || checkpoint.messages.length > checkpoint.round * 2
+      || checkpoint.messages.some((message, index) => message.round !== Math.floor(index / 2) + 1 || message.agentId !== participantBindings[index % 2].agentId)) {
+      fail("The interrupted qualification is inconsistent with its original participants and turn order.");
+    }
+  }
   if (input.priorState) {
     const parsed = qualificationResultSchema.safeParse(input.priorState);
     if (!parsed.success) fail("The stored qualification state is invalid.");
@@ -203,11 +232,12 @@ export async function runQualification(provider: StructuredProvider, input: Qual
   }
   const parsedAnswers = z.array(answerSchema).max(18).safeParse(input.ownerAnswers ?? []);
   if (!parsedAnswers.success) fail("Owner answers require immutable question references and explicit provider disclosure consent.");
-  if (!prior && parsedAnswers.data.length) fail("Answers require a stored qualification question.");
-  const answers = [...(prior?.answers ?? []), ...parsedAnswers.data];
+  const saved = checkpoint ?? prior;
+  if (!saved && parsedAnswers.data.length) fail("Answers require a stored qualification question.");
+  const answers = [...(saved?.answers ?? []), ...parsedAnswers.data];
   if (answers.length > 18 || new Set(answers.map(answer => answer.questionId)).size !== answers.length) fail("Each owner question accepts one immutable answer.");
   for (const answer of parsedAnswers.data) {
-    const question = prior?.ownerQuestions.find(item => item.id === answer.questionId);
+    const question = saved?.ownerQuestions.find(item => item.id === answer.questionId);
     const owner = [left, right].find(item => item.agentId === answer.ownerAgentId);
     const field = owner?.fields.find(item => item.id === answer.fieldId);
     if (!question || question.ownerAgentId !== answer.ownerAgentId || !field || field.providerAllowed !== true
@@ -216,15 +246,17 @@ export async function runQualification(provider: StructuredProvider, input: Qual
     }
   }
   if (prior && !parsedAnswers.data.length) fail("Continue qualification only after a new owner answer.");
-  const messages: QualificationMessage[] = [...(prior?.messages ?? [])];
-  const ownerQuestions: QualificationOwnerQuestion[] = [...(prior?.ownerQuestions ?? [])];
-  const policyChecks: PolicyReceipt[] = [...(prior?.policyChecks ?? [])];
-  const disclosureChecks: DisclosureCheck[] = [...(prior?.disclosureChecks ?? [])];
-  const id = prior?.id ?? randomUUID();
-  const createdAt = prior?.createdAt ?? new Date().toISOString();
+  const messages: QualificationMessage[] = [...(saved?.messages ?? [])];
+  const ownerQuestions: QualificationOwnerQuestion[] = [...(saved?.ownerQuestions ?? [])];
+  const policyChecks: PolicyReceipt[] = [...(saved?.policyChecks ?? [])];
+  const disclosureChecks: DisclosureCheck[] = [...(saved?.disclosureChecks ?? [])];
+  const id = saved?.id ?? randomUUID();
+  const createdAt = saved?.createdAt ?? new Date().toISOString();
   let state: QualificationResult["state"] = "round_limit";
   let stopReason: QualificationResult["stopReason"] = "bounded_round_limit";
-  let round = prior?.round ?? 0;
+  let round = checkpoint ? checkpoint.round - 1 : prior?.round ?? 0;
+  const snapshot = (): QualificationCheckpoint => qualificationCheckpointSchema.parse({ schemaVersion: 1, id, purpose: purpose.data,
+    round, maxRounds, participantBindings, rubric, messages, ownerQuestions, answers, policyChecks, disclosureChecks, createdAt, updatedAt: new Date().toISOString() });
   while (round < maxRounds) {
     round += 1;
     for (const [self, other] of [[left, right], [right, left]]) {
@@ -234,6 +266,12 @@ export async function runQualification(provider: StructuredProvider, input: Qual
       const projections = [own.projection, peer.projection];
       const projectionDigest = digest(projections, [own.receipt, peer.receipt]);
       const availableEvidence = projections.flatMap(projection => projection.evidence);
+      const completed = messages.find(message => message.round === round && message.agentId === self.agentId);
+      if (completed) {
+        if (completed.projectionDigest !== projectionDigest) throw new AgentError("policy", "The saved qualification projection is no longer authorized.");
+        assertEvidence(completed.evidence, availableEvidence);
+        continue;
+      }
       const answerReferences = answers.map(answer => ({
         questionId: answer.questionId,
         ownerAgentId: answer.ownerAgentId,
@@ -247,6 +285,7 @@ export async function runQualification(provider: StructuredProvider, input: Qual
         .slice(-2).map(({ id: messageId, message, peerQuestions, findings }) => ({ id: messageId, message, peerQuestions, findings }));
       const generated = await provider.generate({
         task: "qualification_turn", outputSchema: qualificationTurnSchema,
+        beforeInference: reservation => input.beforeInference?.(reservation, snapshot()),
         data: { self: own.projection, other: peer.projection, rubric,
           requiredCriterionIds: rubric.map(criterion => criterion.id), requiredFindingCount: rubric.length,
           priorPeerMessages, answerReferences, round, maxRounds },
@@ -268,12 +307,13 @@ export async function runQualification(provider: StructuredProvider, input: Qual
       }
       await input.onProgress?.({ kind: "turn_completed", qualificationId: id, schemaVersion: 1, round, maxRounds,
         participantBindings: [...participantBindings], message: structuredClone(messages[messages.length - 1]),
+        checkpoint: snapshot(),
         ownerQuestions: structuredClone(ownerQuestions.filter(question => question.round === round && question.askedByAgentId === self.agentId)),
         policyChecks: structuredClone([own.receipt, peer.receipt]) });
       for (const fieldId of output.requestedFieldIds) {
         const check = await dependencies.checkDisclosure(self, other, fieldId);
         disclosureChecks.push(check);
-        await input.onProgress?.({ kind: "disclosure_checked", qualificationId: id, schemaVersion: 1, check: structuredClone(check) });
+        await input.onProgress?.({ kind: "disclosure_checked", qualificationId: id, schemaVersion: 1, check: structuredClone(check), checkpoint: snapshot() });
       }
     }
     // Recheck current authority after inference before returning a recommendation for persistence.
@@ -287,6 +327,19 @@ export async function runQualification(provider: StructuredProvider, input: Qual
     }
     const essential = latest.flatMap(message => message.findings.filter(finding => rubric.some(criterion => criterion.id === finding.criterionId && criterion.essential)));
     if (latest.some(message => message.findings.some(finding => finding.status === "contradicted"))) { state = "not_aligned"; stopReason = "explicit_mismatch"; break; }
+    // Unknown material findings are owner tasks, not an excuse for repeated identical provider calls.
+    // No owner role is guessed from prose. When no model owner question identifies the addressee,
+    // ask each owner about their own side of the mutual criterion, never about the peer private facts.
+    if (round < maxRounds) {
+      const unaddressed = rubric.filter(criterion => criterion.essential && latest.some(message => message.findings.some(finding => finding.criterionId === criterion.id && finding.status === "unknown"))
+        && !ownerQuestions.some(question => question.criterionIds.includes(criterion.id) && !answers.some(answer => answer.questionId === question.id)));
+      if (unaddressed.length) for (const owner of [left, right]) {
+        const message = latest.find(item => item.agentId === owner.agentId)!;
+        ownerQuestions.push({ id: randomUUID(), ownerAgentId: owner.agentId, askedByAgentId: owner.agentId,
+          question: `Backend clarification: add only your own facts or unanswered questions for ${unaddressed.map(criterion => criterion.id).join(', ')}. Your agent could not establish these mutual criteria. Do not guess the other person details.`,
+          criterionIds: unaddressed.map(criterion => criterion.id), evidence: message.evidence, round, createdAt: new Date().toISOString() });
+      }
+    }
     const pendingQuestions = ownerQuestions.filter(question => !answers.some(answer => answer.questionId === question.id));
     if (essential.every(finding => finding.status === "supported") && pendingQuestions.length === 0) {
       state = "qualified"; stopReason = "mutual_criteria_supported"; break;

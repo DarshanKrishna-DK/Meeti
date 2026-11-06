@@ -27,7 +27,7 @@ import { approvedDocumentContext, deleteStoredDocument, listDocuments } from './
 import { discoveryJobs, queueDiscovery, rememberDiscovery, setDiscoveryEnabled } from './discovery-jobs';
 import { meetingAction, meetingDto } from './meetings';
 import { continueIntake, profileIntakes } from './profile-intake';
-import { listQualificationDtos, answerQualification, resumeQualification, cancelQualification } from './qualifications';
+import { listQualificationDtos, answerQualification, resumeQualification, retryQualification, cancelQualification } from './qualifications';
 import { handleIdentity, publicAgentResponse } from './identity';
 
 function ok(data: unknown, cookie?: string): Response {
@@ -368,6 +368,10 @@ export async function route(request: Request, path: string[]): Promise<Response>
       if (path[2] === 'resume') {
         rateLimit('evaluate:' + actor.id, 4, 3600000);
         return ok(await withAgentRun(actor.id, progress => resumeQualification(actor.id, id, body, checkSession, progress)));
+      }
+      if (path[2] === 'retry') {
+        rateLimit('evaluate:' + actor.id, 4, 3600000);
+        return ok(await withAgentRun(actor.id, progress => retryQualification(actor.id, id, body, checkSession, progress)));
       }
     }
     if (path[0] === 'proposals' && path.length === 3) {
