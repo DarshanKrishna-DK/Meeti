@@ -458,7 +458,11 @@ export async function route(request: Request, path: string[]): Promise<Response>
     throw new HttpError(404, 'NOT_FOUND', 'This endpoint was not found.');
   } catch (error) {
     if (error instanceof z.ZodError) return Response.json({ error: { code: 'INVALID_INPUT', message: error.issues.map(x => `${x.path.join('.') || 'Request'}: ${x.message}`).join('; ').slice(0, 600) } }, { status: 400 });
-    if (error instanceof HttpError) return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status });
+    if (error instanceof HttpError) return Response.json({ error: { code: error.code, message: error.message } }, {
+      status: error.status,
+      headers: error.status === 429 && Number.isInteger(error.retryAfterSeconds) && error.retryAfterSeconds! > 0
+        ? { 'Retry-After': String(error.retryAfterSeconds), 'Cache-Control': 'no-store' } : undefined,
+    });
     if (error instanceof MatchingError) return Response.json({error:{code:'SEMANTIC_'+error.code.toUpperCase(),message:error.message}},{status:503});
     if (error instanceof AgentError) return Response.json({ error: { code: `AI_${error.code.toUpperCase()}`, message: error.message } }, { status: error.code === 'configuration' ? 503 : 409 });
     return Response.json({ error: { code: 'OPERATION_UNAVAILABLE', message: 'This operation could not be completed. Check provider configuration and permission diagnostics before trying again. No success has been assumed.' } }, { status: 503 });

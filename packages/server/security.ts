@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { db, user, type UserRow } from './db';
 import { hash } from './crypto';
 export class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); }
+  constructor(public status: number, public code: string, message: string, public retryAfterSeconds?: number) { super(message); }
 }
 export function requireValue<T>(value: T | null | undefined, message: string, status = 400): T {
   if (value == null) throw new HttpError(status, 'INVALID_REQUEST', message);
@@ -33,9 +33,12 @@ export function checkOrigin(request: Request): void {
 }
 export function rateLimit(bucket: string, maximum: number, windowMs = 60000): void {
   const now = Date.now();
-  db().prepare('INSERT INTO rate_limits(bucket,count,reset_at) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=CASE WHEN reset_at<? THEN 1 ELSE count+1 END, reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END').run(bucket, now + windowMs, now, now);
-  const row = db().prepare('SELECT count FROM rate_limits WHERE bucket=?').get(bucket) as { count: number };
-  if (row.count > maximum) throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Wait a minute and try again.');
+  db().prepare('INSERT INTO rate_limits(bucket,count,reset_at) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=CASE WHEN reset_at<=? THEN 1 ELSE count+1 END, reset_at=CASE WHEN reset_at<=? THEN excluded.reset_at ELSE reset_at END').run(bucket, now + windowMs, now, now);
+  const row = db().prepare('SELECT count,reset_at FROM rate_limits WHERE bucket=?').get(bucket) as { count: number; reset_at: number };
+  if (row.count > maximum) {
+    const seconds = Math.max(1, Math.ceil((row.reset_at - now) / 1000));
+    throw new HttpError(429, 'RATE_LIMITED', `Too many requests. Try again in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}.`, seconds);
+  }
 }
 export async function readBody(request: Request, maximumBytes = 64000): Promise<unknown> {
   if (Number(request.headers.get('content-length')) > maximumBytes) throw new HttpError(413, 'BODY_TOO_LARGE', 'The request is too large.');

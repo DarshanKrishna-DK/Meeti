@@ -10,6 +10,7 @@ import { HttpError, requireValue } from './security';
 import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationPublicIdentityBinding, type QualificationRow } from './qualification-context';
 import type { RunningStage } from './agent-runs';
 import { AgentError, qualificationOutputDiagnostic } from '../agents/src';
+import { withEnsReadScope } from '../ens/rpc-transport';
 
 type RecordValue = NonNullable<ReturnType<typeof qualificationRecord>>;
 const versionInput = z.object({ version: z.number().int().positive() }).strict();
@@ -53,6 +54,9 @@ async function currentPublicIdentities(record: RecordValue) {
 }
 /** A proposal without historical metadata bindings cannot claim a newly declared registration. */
 export async function assertCurrentPublicIdentityBindings(leftUser: string, rightUser: string, expected?: QualificationData['publicIdentities']) {
+  return withEnsReadScope(() => readCurrentPublicIdentityBindings(leftUser, rightUser, expected));
+}
+async function readCurrentPublicIdentityBindings(leftUser: string, rightUser: string, expected?: QualificationData['publicIdentities']) {
   const [left, right] = await Promise.all([publicIdentityBinding(leftUser), publicIdentityBinding(rightUser)]);
   if (expected && (expected.left.digest !== left.digest || expected.right.digest !== right.digest)) throw new HttpError(409, 'PUBLIC_IDENTITY_CHANGED', 'A public agent context or registration changed. Start a fresh candidate review.');
   if (!expected && [left, right].some(identity => identity.context !== 'absent' || identity.association !== 'absent')) throw new HttpError(409, 'PUBLIC_IDENTITY_BINDING_REQUIRED', 'This older introduction has no matching public identity review. Create a fresh introduction request.');
@@ -60,7 +64,13 @@ export async function assertCurrentPublicIdentityBindings(leftUser: string, righ
 }
 async function live(record: RecordValue) {
   current(record);
-  const [, , identities] = await Promise.all([freshPublicIntent(record.row.left_user, record.value.snapshot.leftIntent, 'negotiate'), freshPublicIntent(record.row.right_user, record.value.snapshot.rightIntent, 'negotiate'), currentPublicIdentities(record)]);
+  // One gate shares only identical reads pinned to the same block. The scope ends
+  // before inference, so subsequent actions always resolve current authority again.
+  const [, , identities] = await withEnsReadScope(() => Promise.all([
+    freshPublicIntent(record.row.left_user, record.value.snapshot.leftIntent, 'negotiate'),
+    freshPublicIntent(record.row.right_user, record.value.snapshot.rightIntent, 'negotiate'),
+    readCurrentPublicIdentityBindings(record.row.left_user, record.row.right_user, record.value.publicIdentities),
+  ]));
   current(record);
   return identities;
 }
@@ -122,7 +132,7 @@ export async function startQualification(userId: string, ownIntentId: string, ca
   if (other.userId === userId || candidate.owner.toLowerCase() !== b.owner.toLowerCase() || candidate.intent.ensAgentRef !== b.ensName || candidate.intent.version !== other.value.version || other.value.arkivKey?.toLowerCase() !== candidateKey.toLowerCase() || own.value.goal !== other.value.goal) throw new HttpError(409, 'CANDIDATE_CHANGED', 'The candidate does not match its current owner inbox.');
   const snapshot: ProposalData = { leftIntent: own.value, rightIntent: other.value, leftPolicy: a.policy, rightPolicy: b.policy, leftAgent: a.id, rightAgent: b.id,
     leftProfileDigest: privateSnapshotDigest(userId), rightProfileDigest: privateSnapshotDigest(other.userId), summary: '', compatibility: null, exchanges: [], createdAt: new Date().toISOString() };
-  const [leftIdentity, rightIdentity] = await Promise.all([publicIdentityBinding(userId), publicIdentityBinding(other.userId)]);
+  const [leftIdentity, rightIdentity] = await withEnsReadScope(() => Promise.all([publicIdentityBinding(userId), publicIdentityBinding(other.userId)]));
   const publicIdentities = { left: leftIdentity, right: rightIdentity };
   const pairKey = hash(JSON.stringify([userId, other.userId].map((owner, index) => ({ owner, intent: index ? snapshot.rightIntent : snapshot.leftIntent, policy: index ? snapshot.rightPolicy : snapshot.leftPolicy, profile: index ? snapshot.rightProfileDigest : snapshot.leftProfileDigest,
     publicIdentity: index ? rightIdentity.digest : leftIdentity.digest })).sort((x, y) => x.owner.localeCompare(y.owner))));

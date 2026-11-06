@@ -24,6 +24,10 @@ for (const name of ['ENS_SEPOLIA_AUTH_RPC_URL', 'ENS_SEPOLIA_RPC_URL'] as const)
   if (!url) { console.log(JSON.stringify({ endpoint: name, configured: false })); continue; }
   if (seen.has(url)) { console.log(JSON.stringify({ endpoint: name, sameAsPrior: true })); continue; }
   seen.add(url);
+  const host = new URL(url).hostname;
+  const provider = ['alchemy.com', 'alchemyapi.io', 'infura.io', 'publicnode.com', 'drpc.org', 'ankr.com', 'quiknode.pro']
+    .find(domain => host === domain || host.endsWith(`.${domain}`)) || 'other';
+  console.log(JSON.stringify({ endpoint: name, provider }));
   const client = createPublicClient({ chain: sepolia, transport: url.startsWith('wss:')
     ? webSocket(url, { timeout: 15000, retryCount: 0, reconnect: false, keepAlive: false })
     : http(url, { timeout: 15000, retryCount: 0 }) });

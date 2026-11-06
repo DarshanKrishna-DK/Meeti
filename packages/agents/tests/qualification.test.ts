@@ -34,7 +34,11 @@ function fixtureProvider(generate: (data: TurnData, index: number) => unknown) {
   const provider: StructuredProvider = { async generate<T>(request: { data: unknown; outputSchema: z.ZodType<T> }) {
     const data = request.data as TurnData;
     calls.push(data);
-    return { output: request.outputSchema.parse(generate(data, calls.length - 1)), inference: {
+    const generated = generate(data, calls.length - 1);
+    let output: T;
+    try { output = request.outputSchema.parse(generated); }
+    catch (error) { if (error instanceof z.ZodError) throw new AgentError("output", "The AI result did not match the required task schema."); throw error; }
+    return { output, inference: {
       requestId: crypto.randomUUID(), providerRequestId: "test-only-inference", model: "test-only-model", inputTokens: 1, outputTokens: 1,
       estimatedCostUsd: 0, startedAt: new Date().toISOString(), completedAt: new Date().toISOString(),
     } };
@@ -75,10 +79,12 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   });
 
   it.each([
-    ["evidence_reference", "evidence", (output: ReturnType<typeof turn>) => { output.evidence[0].reference = "untrusted:unavailable"; }],
+    ["evidence_reference", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.evidence[0].reference = "untrusted:unavailable"; }],
     ["evidence_quote", "evidence", (output: ReturnType<typeof turn>) => { output.evidence[0].quote = "Unavailable private text must never appear in diagnostics."; }],
     ["criterion_coverage", "criteria", (output: ReturnType<typeof turn>) => { output.findings[3] = { ...output.findings[0] }; }],
-    ["finding_citations", "finding_citations", (output: ReturnType<typeof turn>) => { output.findings[0].evidenceReferences = ["untrusted:unavailable"]; }],
+    ["finding_reference_schema", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidenceReferences = ["untrusted:unavailable"]; }],
+    ["finding_uncited_reference", "finding_uncited_reference", (output: ReturnType<typeof turn>) => { output.evidence.pop(); }],
+    ["finding_missing_citations", "finding_missing_citations", (output: ReturnType<typeof turn>) => { output.findings[0].evidenceReferences = []; }],
     ["bilateral_evidence", "bilateral_evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidenceReferences = [output.evidence[0].reference]; }],
     ["owner_questions", "owner_questions", (output: ReturnType<typeof turn>) => { output.ownerQuestions = [{ owner: "self", criterionIds: ["shared_objective"], question: "Unavailable private question must never appear in diagnostics." }]; }],
   ] as const)("returns a fixed safe diagnostic for invalid %s without accepting the turn", async (_label, detail, mutate) => {
@@ -165,8 +171,20 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   it("retains the actual adapter receipt, shallow schema, two agents, and current authorization", async () => {
     const transport = vi.fn<typeof fetch>(async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      const data = JSON.parse(body.messages[1].content).untrustedData as TurnData;
+      const data = JSON.parse(body.messages[1].content).untrustedData as TurnData & {
+        self: { evidence: { reference: string }[] }; other: { evidence: { reference: string }[] }; rubric: { id: string }[];
+        citationContract: { allowedEvidenceReferences: string[]; findingReferencesMustAppearInOutputEvidence: boolean; nonUnknownFindingsRequireCitations: boolean; supportedFindingsRequireBothParticipants: boolean };
+      };
       expect(body.response_format.json_schema.schema.properties).toHaveProperty("findings");
+      const properties = body.response_format.json_schema.schema.properties;
+      const references = [...new Set([...data.self.evidence, ...data.other.evidence].map(evidence => evidence.reference))];
+      expect(properties.evidence.items.properties.reference.enum).toEqual(references);
+      expect(properties.findings.items.properties.evidenceReferences.items.enum).toEqual(references);
+      expect(properties.findings.items.properties.criterionId.enum).toEqual(data.rubric.map(criterion => criterion.id));
+      expect(properties.ownerQuestions.items.properties.criterionIds.items.enum).toEqual(data.rubric.map(criterion => criterion.id));
+      expect(data.citationContract).toMatchObject({ allowedEvidenceReferences: references,
+        findingReferencesMustAppearInOutputEvidence: true, nonUnknownFindingsRequireCitations: true, supportedFindingsRequireBothParticipants: true });
+      expect(body.messages[0].content).toContain("An available input source is not an output citation until declared in evidence");
       expect(String(init?.body)).not.toContain("test-private-contact");
       expect(String(init?.body)).not.toContain("test-user-");
       return new Response(JSON.stringify({ id: "test-http-provider-receipt", model: "test-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(turn(data)) } }], usage: { prompt_tokens: 22, completion_tokens: 11 } }));

@@ -10,8 +10,8 @@ const journal = decrypt<{ entry: { state: string; hash: string; entityKey: strin
   readFileSync('.local-data/demo-intent-revision-journal.enc', 'utf8'), `meeti-demo-intent-revision-journal-v1:${reviewSha256}`);
 const entry = journal.entry;
 if (entry.state !== 'confirmed') throw new Error('Confirmed publication evidence is required.');
-const discovery = ['demo-seeker', 'demo-recruiter'].map(label => {
-  const value = progress.discovery[`collaboration:${label}`];
+const discover = (kind: 'collaboration' | 'job') => ['demo-seeker', 'demo-recruiter'].map(label => {
+  const value = progress.discovery[`${kind}:${label}`];
   if (!value || value.source !== 'arkiv' || value.mode !== 'semantic') throw new Error('Actual semantic discovery evidence is required.');
   return { label, source: value.source, mode: value.mode, embeddingExecution: value.embeddingExecution,
     coverage: value.coverage, observedBlocks: value.observedBlocks,
@@ -19,5 +19,7 @@ const discovery = ['demo-seeker', 'demo-recruiter'].map(label => {
       ensAgentRef: candidate.ensAgentRef, owner: candidate.owner, match: candidate.match })) };
 });
 writeFileSync('artifacts/demo-workshop-revision-live.json', JSON.stringify({ exportedAt: new Date().toISOString(), fictional: true,
-  humanVerified: false, reviewSha256, publication: { state: entry.state, hash: entry.hash, entityKey: entry.entityKey, receipt: entry.receipt }, discovery }, null, 2));
+  humanVerified: false, reviewSha256, publication: { state: entry.state, hash: entry.hash, entityKey: entry.entityKey, receipt: entry.receipt }, discovery: discover('collaboration') }, null, 2));
+writeFileSync('artifacts/demo-core-job-discovery-latest.json', JSON.stringify({ exportedAt: new Date().toISOString(), fictional: true,
+  humanVerified: false, discovery: discover('job') }, null, 2));
 console.log('Public receipt and discovery evidence exported without sessions or signing data.');

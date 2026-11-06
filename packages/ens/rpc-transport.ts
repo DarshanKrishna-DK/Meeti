@@ -1,4 +1,5 @@
 import { http, webSocket, type Transport } from "viem";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const readMethods = new Set([
   "eth_chainId", "eth_blockNumber", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt", "eth_getBalance",
@@ -8,6 +9,24 @@ const readMethods = new Set([
 type ReadQueue = { tail: Promise<void>; nextStart: number; pending: number };
 const globalState = globalThis as typeof globalThis & { __meetiEnsReadQueues?: Map<string, ReadQueue> };
 const queues = globalState.__meetiEnsReadQueues ??= new Map<string, ReadQueue>();
+type EnsReadScope = { active: boolean; maxEntries: number; reads: Map<string, Promise<unknown>> };
+const readScopes = new AsyncLocalStorage<EnsReadScope>();
+
+/** One fresh protected verification gate only. Never wrap inference or multiple protected actions. */
+export async function withEnsReadScope<T>(operation: () => Promise<T>, options: { maxEntries?: number } = {}): Promise<T> {
+  const maxEntries = options.maxEntries ?? 512;
+  if (!Number.isInteger(maxEntries) || maxEntries < 1 || maxEntries > 1024) throw new Error("ens_read_scope_bound_invalid");
+  const scope: EnsReadScope = { active: true, maxEntries, reads: new Map() };
+  return readScopes.run(scope, async () => {
+    try { return await operation(); }
+    finally { scope.active = false; scope.reads.clear(); }
+  });
+}
+function pinnedReadKey(endpoint: string, method: string, params: unknown): string | undefined {
+  const index = method === "eth_getStorageAt" ? 2 : ["eth_call", "eth_getCode", "eth_getBalance", "eth_getTransactionCount"].includes(method) ? 1 : -1;
+  if (index < 0 || !Array.isArray(params) || params.length !== index + 1 || typeof params[index] !== "string" || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(params[index])) return undefined;
+  try { return JSON.stringify([endpoint, method, params]); } catch { return undefined; }
+}
 
 function wait(milliseconds: number, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
@@ -73,6 +92,7 @@ export function createEnsReadTransport(rpcUrl: string, options: { fetcher?: type
     const transport = base({ ...parameters, timeout: 10000, retryCount: 0 });
     const request = (async (args, requestOptions) => {
       if (!readMethods.has(args.method)) throw new Error("ens_rpc_read_transport_scope_violation");
+      const perform = async () => {
       for (let attempt = 1; attempt <= 2; attempt++) {
         try { return await transport.request(args, { ...requestOptions, retryCount: 0 }); }
         catch (error) {
@@ -87,6 +107,19 @@ export function createEnsReadTransport(rpcUrl: string, options: { fetcher?: type
         }
       }
       throw new Error("ens_rpc_read_attempts_exhausted");
+      };
+      const scope = readScopes.getStore();
+      const key = scope?.active && !requestOptions?.signal ? pinnedReadKey(rpcUrl, args.method, args.params) : undefined;
+      if (!scope || !key) return perform();
+      const existing = scope.reads.get(key);
+      if (existing) return existing;
+      if (scope.reads.size >= scope.maxEntries) return perform();
+      const pending = perform().catch(error => {
+        if (scope.reads.get(key) === pending) scope.reads.delete(key);
+        throw error;
+      });
+      scope.reads.set(key, pending);
+      return pending;
     }) as typeof transport.request;
     return { ...transport, request };
   };
