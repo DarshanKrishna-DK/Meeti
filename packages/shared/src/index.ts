@@ -12,6 +12,7 @@ export type Profile = {
   contextSharing?: 'private-agent' | 'authorized-counterpart' | 'ask-first';
 };
 export type ContextDocument = { id: string; name: string; mimeType: 'application/pdf' | 'text/plain' | 'text/markdown'; size: number;
+  title?: string; description?: string; sharingScope?: 'private-agent' | 'authorized-counterpart' | 'ask-first' | 'public'; publicExcerptApproved?: boolean;
   version: number; extractedText: string; extractionStatus: 'ready' | 'no-text' | 'failed';
   reviewedExcerpt: string; allowAgentContext: boolean; allowOriginalShare: boolean; createdAt: string; updatedAt: string };
 export type Policy = { version: number; purpose: Goal; allowedFields: string[]; allowedActions: Action[]; expiresAt: string; paused: boolean };

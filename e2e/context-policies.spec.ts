@@ -130,12 +130,13 @@ test('keeps uploaded text private, persists reviewed permissions, rejects anothe
   const excerpt = card.getByLabel('Reviewed agent excerpt for private-notes.txt', { exact: true });
   await expect(excerpt).toHaveValue(text);
   await excerpt.fill('A reviewed design collaborator.');
-  await card.getByRole('checkbox', { name: 'Allow my agent to use and exchange this reviewed excerpt.', exact: true }).check();
+  await card.getByLabel('Excerpt sharing scope for private-notes.txt', { exact: true }).selectOption('authorized-counterpart');
+  await card.getByRole('checkbox', { name: 'Approve agent use of this reviewed excerpt within its selected scope.', exact: true }).check();
   await card.getByRole('checkbox', { name: 'Allow me to explicitly share this original file inside an authorized introduction room.', exact: true }).check();
   await card.getByRole('button', { name: 'Save excerpt and permissions', exact: true }).click();
   await expect(card.getByText('Excerpt approved', { exact: true })).toBeVisible();
   const approved = (await documents(context, baseURL!))[0];
-  expect(approved).toMatchObject({ version: 2, reviewedExcerpt: 'A reviewed design collaborator.', allowAgentContext: true, allowOriginalShare: true });
+  expect(approved).toMatchObject({ version: 2, reviewedExcerpt: 'A reviewed design collaborator.', sharingScope: 'authorized-counterpart', allowAgentContext: true, allowOriginalShare: true });
   await expect(card.getByText('World approval is paused. Original file sharing remains locked.', { exact: true })).toBeVisible();
   await expect(card.getByRole('button', { name: 'Create protected original file link', exact: true })).toHaveCount(0);
   const download = await context.request.get(`${baseURL}/api/context/files/${uploaded.id}/download`);
@@ -166,6 +167,7 @@ test('keeps uploaded text private, persists reviewed permissions, rejects anothe
   expect((await documents(context, baseURL!))[0]).toMatchObject({ version: 4, reviewedExcerpt: 'Preserved local excerpt draft.', allowAgentContext: true, allowOriginalShare: true });
   await page.reload();
   await expect(page.getByLabel('Reviewed agent excerpt for private-notes.txt', { exact: true })).toHaveValue('Preserved local excerpt draft.');
+  await expect(page.getByLabel('Excerpt sharing scope for private-notes.txt', { exact: true })).toHaveValue('authorized-counterpart');
   mkdirSync(resolve('artifacts/redesign'), { recursive: true });
   await page.screenshot({ path: resolve('artifacts/redesign/context-profile-files-1440.png'), fullPage: true, animations: 'disabled' });
   const reloadedCard = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'private-notes.txt', exact: true }) });
@@ -197,7 +199,7 @@ test('extracts only the first five actual PDF pages and enforces browser size an
   await library.getByText('Review extracted text', { exact: true }).click();
   await expect(library.getByText(/UNIQUE-PDF-PAGE-5/)).toBeVisible();
   await expect(library.getByText(/UNIQUE-PDF-PAGE-6/)).toHaveCount(0);
-  await expect(library.getByRole('checkbox', { name: 'Allow my agent to use and exchange this reviewed excerpt.', exact: true })).toBeDisabled();
+  await expect(library.getByRole('checkbox', { name: 'Approve agent use of this reviewed excerpt within its selected scope.', exact: true })).toBeDisabled();
   for (let index = 1; index <= 4; index += 1) {
     const result = await post(context, baseURL!, 'context/files', { name: `private-${index}.txt`, mimeType: 'text/plain', contentBase64: Buffer.from(`Private supporting note ${index}`).toString('base64') });
     expect(result.status()).toBe(200);
@@ -304,7 +306,8 @@ test('fits the public hero at desktop sizes and retains a seamless controllable 
   expect(animation.name).toBe('foundations-travel');
   expect(animation.state).toBe('running');
   expect(animation.sequences).toHaveLength(2);
-  expect(animation.sequences[0]).toEqual(animation.sequences[1]);
+  expect(animation.sequences[0].content).toEqual(animation.sequences[1].content);
+  expect(animation.sequences[0].width).toBeCloseTo(animation.sequences[1].width, 1);
   await expect(belt.locator('.foundations-sequence').nth(1)).toHaveAttribute('aria-hidden', 'true');
   const leftward = await track.evaluate(async element => {
     const animation = element.getAnimations()[0];

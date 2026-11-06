@@ -23,6 +23,7 @@ export default defineConfig({
       DATABASE_PATH: join(process.cwd(), '.local-data', `e2e-${randomUUID()}.sqlite`),
       DATA_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
       ENS_SEPOLIA_RPC_URL: '', ENS_SEPOLIA_AUTH_RPC_URL: '', ARKIV_ACCESS_KEY: '', AI_API_KEY: '', WORLD_CLIENT_ID: '', WORLD_CLIENT_SECRET: '', WORLD_CAPABILITY_ENABLED: 'false',
+      SUPABASE_STORAGE_ENABLED: 'false', SUPABASE_SERVICE_ROLE_KEY: '', SUPABASE_URL: '',
       NEXT_DIST_DIR: '.next',
     },
   },

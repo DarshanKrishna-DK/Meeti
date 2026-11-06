@@ -18,7 +18,7 @@ type ShareRow = { id: string; document_id: string; user_id: string; recipient_id
 function documentMetadata(row: DocumentRow): ContextDocument {
   const value = decrypt<ContextDocument>(row.metadata, `context-metadata:${row.user_id}:${row.id}`);
   if (value.id !== row.id || value.version !== row.version || value.size !== row.size) throw new Error('Private document metadata is invalid.');
-  return value;
+  return { ...value, title: value.title || value.name, description: value.description || '', sharingScope: value.sharingScope || 'ask-first', publicExcerptApproved: value.publicExcerptApproved === true };
 }
 export function ownedDocument(userId: string, id: string): { row: DocumentRow; document: ContextDocument } {
   const row = db().prepare('SELECT * FROM private_context_documents WHERE id=? AND user_id=?').get(id, userId) as DocumentRow | undefined;
@@ -29,14 +29,23 @@ export function listDocuments(userId: string): ContextDocument[] {
   return (db().prepare('SELECT * FROM private_context_documents WHERE user_id=? ORDER BY id').all(userId) as DocumentRow[]).map(documentMetadata);
 }
 export function contextFingerprint(userId: string): string {
-  const projection = listDocuments(userId).filter(value => value.allowAgentContext && value.reviewedExcerpt.trim())
+  const projection = listDocuments(userId).filter(counterpartExcerptAllowed)
     .map(value => ({ id: value.id, reviewedExcerpt: value.reviewedExcerpt.trim(), allowAgentContext: true }));
   return projection.length ? hash(JSON.stringify(projection)) : '';
 }
 /** Return only owner-reviewed reference text. Filenames and extracted previews never enter this projection. */
 export function approvedDocumentContext(userId: string): string {
-  return listDocuments(userId).filter(value => value.allowAgentContext && value.reviewedExcerpt.trim())
+  return listDocuments(userId).filter(counterpartExcerptAllowed)
     .map(value => value.reviewedExcerpt.trim()).join('\n\n').slice(0, 1500);
+}
+function counterpartExcerptAllowed(value: ContextDocument): boolean {
+  return value.allowAgentContext && Boolean(value.reviewedExcerpt.trim()) && (value.sharingScope === 'authorized-counterpart' || value.sharingScope === 'public' && value.publicExcerptApproved === true);
+}
+type DocumentInput = Pick<ContextDocument, 'name' | 'mimeType' | 'extractedText' | 'extractionStatus' | 'title' | 'description'>;
+type DocumentReview = Pick<ContextDocument, 'reviewedExcerpt' | 'allowAgentContext' | 'allowOriginalShare' | 'title' | 'description' | 'sharingScope' | 'publicExcerptApproved'> & { expectedVersion: number };
+function validateDescription(input: { title?: string; description?: string }) {
+  if (input.title !== undefined && (!input.title.trim() || input.title.length > 120 || /[\x00-\x1f\x7f]/.test(input.title))
+    || input.description !== undefined && (input.description.length > 500 || input.description.includes('\0'))) throw new HttpError(400, 'INVALID_DOCUMENT_DESCRIPTION', 'Use a title of at most 120 characters and a purpose of at most 500 characters.');
 }
 export function assertDocumentCapacity(userId: string, size: number): void {
   const usage = db().prepare('SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS total FROM private_context_documents WHERE user_id=?').get(userId) as { count: number; total: number };
@@ -44,13 +53,15 @@ export function assertDocumentCapacity(userId: string, size: number): void {
     throw new HttpError(413, 'DOCUMENT_LIMIT', 'You can keep up to five private documents with a total size of 5 MiB. Delete a document before adding another.');
   }
 }
-export function createDocument(userId: string, input: Pick<ContextDocument, 'name' | 'mimeType' | 'extractedText' | 'extractionStatus'>, bytes: Uint8Array, checkSession: () => void): ContextDocument {
+export function createDocument(userId: string, input: DocumentInput, bytes: Uint8Array, checkSession: () => void): ContextDocument {
   return atomic(() => {
     checkSession();
+    validateDescription(input);
     if (bytes.byteLength < 1 || bytes.byteLength > MAX_DOCUMENT_BYTES) throw new HttpError(413, 'DOCUMENT_TOO_LARGE', 'Private documents must contain between one byte and 1 MiB.');
     assertDocumentCapacity(userId, bytes.byteLength);
     const id = randomUUID(), createdAt = new Date().toISOString();
     const document: ContextDocument = { ...input, extractedText: input.extractedText.slice(0, MAX_EXTRACTED_TEXT), id,
+      title: input.title?.trim() || input.name, description: input.description || '', sharingScope: 'private-agent', publicExcerptApproved: false,
       size: bytes.byteLength, version: 1, reviewedExcerpt: '', allowAgentContext: false, allowOriginalShare: false, createdAt, updatedAt: createdAt };
     db().prepare('INSERT INTO private_context_documents(id,user_id,version,size,metadata,content) VALUES(?,?,?,?,?,?)')
       .run(id, userId, 1, document.size, encrypt(document, `context-metadata:${userId}:${id}`),
@@ -61,16 +72,23 @@ export function createDocument(userId: string, input: Pick<ContextDocument, 'nam
 export function assertDocumentVersion(document: ContextDocument, expectedVersion: number): void {
   if (document.version !== expectedVersion) throw new HttpError(409, 'DOCUMENT_CHANGED', 'This private document changed. Refresh and review its current version.');
 }
-export function updateDocument(userId: string, id: string, input: Pick<ContextDocument, 'reviewedExcerpt' | 'allowAgentContext' | 'allowOriginalShare'> & { expectedVersion: number }, checkSession: () => void): ContextDocument {
+export function updateDocument(userId: string, id: string, input: DocumentReview, checkSession: () => void): ContextDocument {
   return atomic(() => {
     checkSession();
     assertNotDeleting(userId, id);
     const { document } = ownedDocument(userId, id);
     assertDocumentVersion(document, input.expectedVersion);
+    validateDescription(input);
+    const title = input.title?.trim() || document.title || document.name, description = input.description ?? document.description ?? '';
+    const sharingScope = input.sharingScope || document.sharingScope || 'ask-first';
+    if (!['private-agent', 'authorized-counterpart', 'ask-first', 'public'].includes(sharingScope)) throw new HttpError(400, 'INVALID_DOCUMENT_SCOPE', 'Choose a supported excerpt sharing scope.');
+    if (sharingScope === 'public' && (input.publicExcerptApproved !== true || !input.reviewedExcerpt.trim())) throw new HttpError(400, 'PUBLIC_EXCERPT_REVIEW_REQUIRED', 'Approve the exact reviewed excerpt before selecting public excerpt scope.');
+    const publicExcerptApproved = sharingScope === 'public' && input.publicExcerptApproved === true;
     if (input.reviewedExcerpt.length > MAX_REVIEWED_EXCERPT || input.reviewedExcerpt.includes('\0')) throw new HttpError(400, 'INVALID_EXCERPT', 'The reviewed excerpt must be plain text of at most 1200 characters.');
     if (input.allowAgentContext && !input.reviewedExcerpt.trim()) throw new HttpError(400, 'EXCERPT_REQUIRED', 'Review and save an excerpt before allowing agent context.');
-    if (document.reviewedExcerpt === input.reviewedExcerpt && document.allowAgentContext === input.allowAgentContext && document.allowOriginalShare === input.allowOriginalShare) return document;
-    const value: ContextDocument = { ...document, reviewedExcerpt: input.reviewedExcerpt, allowAgentContext: input.allowAgentContext,
+    if (document.reviewedExcerpt === input.reviewedExcerpt && document.allowAgentContext === input.allowAgentContext && document.allowOriginalShare === input.allowOriginalShare
+      && document.title === title && document.description === description && document.sharingScope === sharingScope && document.publicExcerptApproved === publicExcerptApproved) return document;
+    const value: ContextDocument = { ...document, title, description, sharingScope, publicExcerptApproved, reviewedExcerpt: input.reviewedExcerpt, allowAgentContext: input.allowAgentContext,
       allowOriginalShare: input.allowOriginalShare, version: document.version + 1, updatedAt: new Date().toISOString() };
     db().prepare('UPDATE private_context_documents SET version=?,metadata=? WHERE id=? AND user_id=? AND version=?')
       .run(value.version, encrypt(value, `context-metadata:${userId}:${id}`), id, userId, document.version);
@@ -106,9 +124,9 @@ function journal(userId: string, value: StorageJournal): string {
   return id;
 }
 function clearJournal(id: string) { db().prepare('DELETE FROM operations WHERE id=?').run(id); }
-export async function createStoredDocument(userId: string, input: Pick<ContextDocument, 'name' | 'mimeType' | 'extractedText' | 'extractionStatus'>, bytes: Uint8Array, checkSession: () => void): Promise<ContextDocument> {
+export async function createStoredDocument(userId: string, input: DocumentInput, bytes: Uint8Array, checkSession: () => void): Promise<ContextDocument> {
   if (!privateStorageEnabled()) return createDocument(userId, input, bytes, checkSession);
-  checkSession(); assertDocumentCapacity(userId, bytes.byteLength);
+  checkSession(); validateDescription(input); assertDocumentCapacity(userId, bytes.byteLength);
   if (!bytes.byteLength || bytes.byteLength > MAX_DOCUMENT_BYTES) throw new HttpError(413, 'DOCUMENT_TOO_LARGE', 'Private documents must contain between one byte and 1 MiB.');
   const id = randomUUID(), timestamp = new Date().toISOString();
   const ciphertext = encrypt({ contentBase64: Buffer.from(bytes).toString('base64') }, `context-content:${userId}:${id}`);
@@ -119,6 +137,7 @@ export async function createStoredDocument(userId: string, input: Pick<ContextDo
     return atomic(() => {
       checkSession(); assertDocumentCapacity(userId, bytes.byteLength);
       const document: ContextDocument = { ...input, extractedText: input.extractedText.slice(0, MAX_EXTRACTED_TEXT), id, size: bytes.byteLength, version: 1,
+        title: input.title?.trim() || input.name, description: input.description || '', sharingScope: 'private-agent', publicExcerptApproved: false,
         reviewedExcerpt: '', allowAgentContext: false, allowOriginalShare: false, createdAt: timestamp, updatedAt: timestamp };
       db().prepare('INSERT INTO private_context_documents VALUES(?,?,?,?,?,?)').run(id, userId, 1, document.size, encrypt(document, `context-metadata:${userId}:${id}`), encrypt(pointer, `context-content:${userId}:${id}`));
       clearJournal(operationId); return document;
@@ -150,7 +169,11 @@ export async function deleteStoredDocument(userId: string, id: string, expectedV
   if (!('storage' in content)) return deleteDocument(userId, id, expectedVersion, checkSession);
   if (!privateStorageEnabled()) throw new HttpError(503, 'PRIVATE_STORAGE_PAUSED', 'Cloud document deletion is currently paused.');
   if (content.path.split('/')[0] !== hash(userId)) throw new HttpError(503, 'PRIVATE_OBJECT_INVALID', 'The private object owner reference is invalid.');
-  const operationId = journal(userId, { documentId: id, pointer: content, expectedVersion, action: 'delete' });
+  const operationId = atomic(() => {
+    checkSession(); const current = ownedDocument(userId, id); assertDocumentVersion(current.document, expectedVersion);
+    if (current.row.content !== initial.row.content) throw new HttpError(409, 'DOCUMENT_CHANGED', 'The private original changed before deletion.');
+    return journal(userId, { documentId: id, pointer: content, expectedVersion, action: 'delete' });
+  });
   await removePrivateObject(content);
   atomic(() => { checkSession(); const current = ownedDocument(userId, id); assertDocumentVersion(current.document, expectedVersion);
     if (current.row.content !== initial.row.content) throw new HttpError(409, 'DOCUMENT_CHANGED', 'The private original changed during deletion.');

@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS namespace_claims (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  label TEXT NOT NULL UNIQUE,
+  recipient TEXT NOT NULL UNIQUE,
+  version INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

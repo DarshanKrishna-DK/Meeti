@@ -7,7 +7,7 @@ import type { ProfileIntakeResult } from '@/packages/agents/src';
 import { api, Button, Checkline, Field, Tag, type Shared } from './workspace-features';
 import styles from './context-library.module.css';
 
-type Intake = { id: string; version: number; text: string; result: ProfileIntakeResult | null; status: 'running' | 'ready' | 'failed'; failureCode?: string };
+type Intake = { id: string; version: number; text: string; includePrivateContext?: boolean; result: ProfileIntakeResult | null; status: 'running' | 'ready' | 'failed'; failureCode?: string };
 type Props = Shared & { onApply: (suggestions: Partial<Profile>) => void; draftConflict: boolean };
 type SuggestedField = 'bio' | 'offering' | 'seeking' | 'tags';
 const names: Record<SuggestedField, string> = { bio: 'Your story', offering: 'What you offer', seeking: 'What you seek', tags: 'Topics, separated by commas' };
@@ -16,9 +16,10 @@ export function ProfileIntake(props: Props) {
   return <OwnerProfileIntake key={props.state.user.id} {...props} />;
 }
 
-function OwnerProfileIntake({ run, busy, onApply, draftConflict }: Props) {
+function OwnerProfileIntake({ state, run, busy, onApply, draftConflict }: Props) {
   const [items, setItems] = useState<Intake[]>([]), [chosen, setChosen] = useState(''), [text, setText] = useState(''), [consent, setConsent] = useState(false);
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [error, setError] = useState('');
+  const [includePrivateContext, setIncludePrivateContext] = useState(false);
   const alive = useRef(true), actionPending = useRef(false), epoch = useRef(0);
   const selected = items.find(item => item.id === chosen) || items[0];
 
@@ -47,17 +48,20 @@ function OwnerProfileIntake({ run, busy, onApply, draftConflict }: Props) {
     <p>Describe what you do, what you offer, and who you would like to meet. Your agent can ask a few focused questions and suggest a private profile draft for your review.</p>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     <form onSubmit={event => { event.preventDefault(); if (!consent || !text.trim()) return; void perform(async () => {
-      const result = await api<{ id?: string }>('profile/intake', { text: text.trim(), providerDisclosureConsent: true });
-      if (alive.current) { if (result?.id) setChosen(result.id); setConsent(false); }
+      const result = await api<{ id?: string }>('profile/intake', { text: text.trim(), providerDisclosureConsent: true, includePrivateContext: includePrivateContext && state.profile.aiConsent });
+      if (alive.current) { if (result?.id) setChosen(result.id); setConsent(false); setIncludePrivateContext(false); }
     }, 'Your private intake draft is ready to review.'); }}>
       <fieldset className={styles.fieldset} disabled={busy || pending}>
         <Field label="Your professional context" hint="Share only information you want the configured model provider to process. Up to 8000 characters."><textarea rows={5} maxLength={8000} required value={text} onChange={event => { setText(event.target.value); setConsent(false); }} placeholder="I work on... I can help with... I am looking for..." /></Field>
-        <Checkline checked={consent} onChange={setConsent}>I allow this text to be processed by the configured model provider to prepare a private draft.</Checkline>
+        <fieldset className={styles.fieldset} disabled={!state.profile.aiConsent}><Checkline checked={includePrivateContext && state.profile.aiConsent} onChange={value => { setIncludePrivateContext(value); setConsent(false); }}>Also send my saved professional details and owner-reviewed, agent-enabled document excerpts to the model provider for this private intake.</Checkline></fieldset>
+        <p className="small-copy">This choice uses saved context, not unsaved profile edits. It excludes contact, employer, raw files and extracted previews. It sends nothing to another person and changes no counterpart sharing rule. Private and ask-first scope can be used for your own intake with this separate approval. The combined source and answers must fit within 8000 characters. {!state.profile.aiConsent && 'Save AI processing consent in Your privacy to enable saved context.'}</p>
+        <Checkline checked={consent} onChange={setConsent}>I allow this text{includePrivateContext && state.profile.aiConsent ? ' and the selected saved context' : ''} to be processed by the configured model provider to prepare a private draft.</Checkline>
         <Button type="submit" disabled={!consent || !text.trim()}>{pending ? 'Preparing your draft...' : 'Prepare a private draft'}</Button>
       </fieldset>
     </form>
     {loading ? <p role="status">Loading your saved private drafts...</p> : items.length > 0 ? <>
       <Field label="Saved private intake"><select value={selected?.id || ''} disabled={busy || pending} onChange={event => setChosen(event.target.value)}>{items.map((item, index) => <option key={item.id} value={item.id}>Draft {items.length - index}, revision {item.version}: {item.text.slice(0, 65)}</option>)}</select></Field>
+      {selected?.includePrivateContext && <p className="small-copy">This intake includes approved saved context. Follow-ups reuse that original source with your new approved answers. Changed professional details, revoked AI consent or changed excerpt approvals require a fresh intake.</p>}
       {selected?.status === 'running' && <p role="status" className={styles.notice}>This private intake is still processing. Refresh its status before sending another answer.</p>}
       {selected?.status === 'failed' && <p role="status" className={styles.notice}>The last intake request stopped{selected.failureCode ? ` (${selected.failureCode})` : ''}. No replacement draft was assumed. {selected.result ? 'Your last completed draft remains available to review.' : 'Start a new intake when you are ready.'}</p>}
       {selected?.result && <IntakeReview key={`${selected.id}:${selected.version}`} entry={{ ...selected, result: selected.result }} busy={busy || pending || selected.status === 'running'} draftConflict={draftConflict} onApply={onApply} onContinue={answers => perform(() => api('profile/intake', { id: selected.id, version: selected.version, answers }), 'Your follow-up answers were processed. Review the updated private draft.')} />}

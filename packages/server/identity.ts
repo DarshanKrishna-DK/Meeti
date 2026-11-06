@@ -9,6 +9,7 @@ import { createEnsReadTransport } from '../ens/rpc-transport';
 import { agent, atomic, audit, db, type UserRow } from './db';
 import { decrypt, encrypt } from './crypto';
 import { checkOrigin, HttpError, rateLimit, requireUser, requireValue } from './security';
+import { handleNamespaceClaims } from './namespace-claims';
 
 type Stored = { ensName?: string; identity?: AgentRegistryIdentity; context?: PublicAgentContext; receipts: { operation: string; hash: string; blockNumber: string }[] };
 type Transaction = { chainId: number; from: string; to: string; data: Hex; value: string; operation: string; ensName: string; gas?: string; gasPrice?: string; key?: string; publicValue?: string };
@@ -65,6 +66,7 @@ const prepareSchema = z.object({ operation: z.enum(['register-identity', 'set-id
 
 /** Authenticated REST identity management. This endpoint never signs or broadcasts. */
 export async function handleIdentity(request: Request, key: string, actor: UserRow, body?: unknown): Promise<Response | null> {
+  if (key.startsWith('namespace/')) { const response = await handleNamespaceClaims(request, key, actor, body); if (response) return response; }
   if (!key.startsWith('identity') && !key.startsWith('namespace')) return null;
   if (!actor.wallet) throw new HttpError(409, 'WALLET_REQUIRED', 'Authenticate with your owner wallet first.');
   const c = connections();

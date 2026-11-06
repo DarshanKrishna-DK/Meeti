@@ -10,6 +10,7 @@ import { DEFAULT_POLICY_ACTIONS, DEFAULT_POLICY_DAYS, DEFAULT_POLICY_FIELDS } fr
 import { Button, Checkline, Field, Tag, WalletPanel, api, short, submitTransaction, type Shared } from './workspace-features';
 import { DraftConflict } from './draft-conflict';
 import { IdentitySetup } from './identity-setup';
+import { NameClaimPanel } from './namespace-claims';
 import styles from './context-library.module.css';
 
 type AgentDraft = {
@@ -69,7 +70,12 @@ export function AgentStudio(props: Shared) {
 
 function OptionalIdentitySetup({ state, run, busy }: Shared) {
   const [open, setOpen] = useState(false);
-  return <section className="panel form-panel"><h2>Portable agent identity</h2><p className="small-copy">Inspect the optional public identity registration and supported endpoint records. Opening this panel requests fresh chain information. Each write needs a separate wallet review.</p><Button kind="secondary" disabled={busy} onClick={() => setOpen(value => !value)}>{open ? 'Close identity setup' : 'Open identity setup'}</Button>{open && <IdentitySetup state={state} onUpdated={() => { void run(async () => {}, 'Identity receipt updated.'); }} />}</section>;
+  return <section className="panel form-panel"><h2>Portable agent identity</h2><p className="small-copy">Inspect the optional public identity registration and supported endpoint records. Opening this panel requests fresh chain information. Each write needs a separate wallet review.</p>{!state.agent && <p className="small-copy">Set up or recover your agent before inspecting its public registration.</p>}<Button kind="secondary" disabled={busy || !state.agent} onClick={() => setOpen(value => !value)}>{open ? 'Close identity setup' : 'Open identity setup'}</Button>{open && state.agent && <IdentitySetup state={state} onUpdated={() => { void run(async () => {}, 'Identity receipt updated.'); }} />}</section>;
+}
+
+function OptionalNameClaim({ state, run, busy }: Shared) {
+  const [open, setOpen] = useState(false);
+  return <section className="panel form-panel"><h2>Request your Meeti name</h2><p className="small-copy">Request an available name under the project testnet parent. The issuer reviews each request. A reservation is not a confirmed registration, and test gas is separate from the registration fee.</p><Button kind="secondary" disabled={busy} onClick={() => setOpen(value => !value)}>{open ? 'Close name request' : 'Open name request'}</Button>{open && <NameClaimPanel state={state} onUpdated={() => { void run(async () => {}, 'Name request updated.'); }} />}</section>;
 }
 
 function AccountAgentStudio({ state, run, busy }: Shared) {
@@ -123,6 +129,7 @@ function AccountAgentStudio({ state, run, busy }: Shared) {
   }
 
   return <>
+    <OptionalNameClaim state={state} run={run} busy={busy} />
     <section className="panel ens-guidance"><span className="section-note">Your identity, with a few clear boundaries</span><h2>Start with a name you control.</h2><p>You can sign in without owning an ENS name. Agent actions need a genuine Sepolia ENS agent identity, a separate delegate and current scoped permissions.</p><ol><li><strong>1. Bring an existing agent</strong>Import a configured identity you own. Meeti checks the owner, dedicated resolver, policy and delegation live.</li><li><strong>2. Or create a testnet identity</strong>Use the official Sepolia ENS app for a parent name. Free testnet names and test gas are separate from paid mainnet registration.</li><li><strong>3. Review each permission</strong>Only the approved fields, actions and expiry apply. Saving a form never grants onchain authority.</li></ol><a className="text-link" href="https://sepolia.app.ens.domains/" target="_blank" rel="noopener noreferrer">Open official Sepolia ENS app<ExternalLink size={14}/></a></section>
     {!agent && <fieldset className={styles.fieldset} disabled={busy}><ExistingIdentity state={state} run={run} busy={busy}/></fieldset>}
     <div className="editor-grid agent-layout">

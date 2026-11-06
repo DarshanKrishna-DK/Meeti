@@ -23,7 +23,7 @@ import { handleAgentImport } from './agent-import';
 import { agentRuns, withAgentRun } from './agent-runs';
 import { handleContext } from './context';
 import { policyHistory } from './policy-history';
-import { approvedDocumentContext } from './context-store';
+import { approvedDocumentContext, deleteStoredDocument, listDocuments } from './context-store';
 import { discoveryJobs, queueDiscovery, rememberDiscovery, setDiscoveryEnabled } from './discovery-jobs';
 import { meetingAction, meetingDto } from './meetings';
 import { continueIntake, profileIntakes } from './profile-intake';
@@ -419,7 +419,17 @@ export async function route(request: Request, path: string[]): Promise<Response>
     if (key === 'world/cancel') return ok(cancelWorld(actor.id, body));
     if (key === 'account/delete') {
       z.object({ confirmation: z.literal('DELETE') }).strict().parse(body);
+      const checkDeletion = () => {
+        if (requireUser(request).id !== actor.id) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Sign in again before deleting this account.');
+        if (db().prepare("SELECT id FROM operations WHERE user_id=? AND state IN ('storage_pending','storage_cleanup','storage_deleting')").get(actor.id)) {
+          throw new HttpError(409, 'PRIVATE_STORAGE_PENDING', 'Reconcile pending private file operations before deleting your account.');
+        }
+      };
+      checkDeletion();
+      for (const document of listDocuments(actor.id)) await deleteStoredDocument(actor.id, document.id, document.version, () => { requireUser(request); });
       atomic(() => {
+        checkDeletion();
+        if (listDocuments(actor.id).length) throw new HttpError(409, 'PRIVATE_STORAGE_PENDING', 'A private file changed during account deletion. Review and retry.');
         db().prepare('UPDATE proposals SET status=? WHERE left_user=? OR right_user=?').run('revoked', actor.id, actor.id);
         db().prepare('DELETE FROM users WHERE id=?').run(actor.id);
       });

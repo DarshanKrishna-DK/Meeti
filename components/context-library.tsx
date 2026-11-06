@@ -8,11 +8,12 @@ import type { ContextDocument } from '@/packages/shared/src';
 import { Button, Field, Tag, api, type Shared } from './workspace-features';
 import styles from './context-library.module.css';
 
-type DocumentDraft = Pick<ContextDocument, 'reviewedExcerpt' | 'allowAgentContext' | 'allowOriginalShare'>;
+type DocumentDraft = Pick<ContextDocument, 'reviewedExcerpt' | 'allowAgentContext' | 'allowOriginalShare' | 'title' | 'description' | 'sharingScope' | 'publicExcerptApproved'>;
 const maxBytes = 1024 * 1024;
 
 function documentDraft(document: ContextDocument): DocumentDraft {
-  return { reviewedExcerpt: document.reviewedExcerpt, allowAgentContext: document.allowAgentContext, allowOriginalShare: document.allowOriginalShare };
+  return { reviewedExcerpt: document.reviewedExcerpt, allowAgentContext: document.allowAgentContext, allowOriginalShare: document.allowOriginalShare,
+    title: document.title || document.name, description: document.description || '', sharingScope: document.sharingScope || 'ask-first', publicExcerptApproved: document.publicExcerptApproved === true };
 }
 
 function fileMime(file: File): ContextDocument['mimeType'] {
@@ -41,6 +42,8 @@ function AccountContextLibrary({ state, run, busy }: Shared) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [inputKey, setInputKey] = useState(0);
   const alive = useRef(true);
 
@@ -86,13 +89,16 @@ function AccountContextLibrary({ state, run, busy }: Shared) {
         const mimeType = fileMime(file);
         const contentBase64 = await encodeFile(file);
         if (!alive.current) return;
-        const saved = await api<ContextDocument>('context/files', { name: file.name, mimeType, contentBase64 });
+        const saved = await api<ContextDocument>('context/files', { name: file.name, mimeType, contentBase64, ...(title.trim() ? { title: title.trim() } : {}), description });
         if (!alive.current) return;
         setDocuments(current => [...current.filter(item => item.id !== saved.id), saved]);
         setFile(null);
+        setTitle(''); setDescription('');
         setInputKey(current => current + 1);
       }, 'Your file has been saved privately. Review an excerpt before allowing agent use.'); }}>
         <Field label="Resume or supporting file" hint="PDF, TXT or Markdown. Maximum 1 MiB each, up to five files. PDF extraction covers the first five pages and does not perform OCR."><input key={inputKey} className={styles.fileInput} type="file" accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown" onChange={event => setFile(event.target.files?.[0] || null)} /></Field>
+        <Field label="File title" hint="Optional. Use a title that helps you recognize this context."><input value={title} maxLength={120} onChange={event => setTitle(event.target.value)} /></Field>
+        <Field label="Purpose or description" hint="Private metadata. This description is not automatically sent to another agent."><textarea value={description} maxLength={500} rows={2} onChange={event => setDescription(event.target.value)} /></Field>
         <Button kind="secondary" type="submit" disabled={!file || !loaded || documents.length >= 5}><Upload size={15} />Upload private file</Button>
       </form>
     </fieldset>
@@ -120,11 +126,11 @@ function DocumentCard({ document, state, busy, perform, onSaved, onDeleted }: {
 
   function update<Key extends keyof DocumentDraft>(key: Key, value: DocumentDraft[Key]) {
     if (!draft) setBaseVersion(document.version);
-    setDraft({ ...form, [key]: value });
+    setDraft({ ...form, [key]: value, ...(['reviewedExcerpt', 'sharingScope'].includes(key) ? { publicExcerptApproved: false } : {}) });
   }
 
   return <article className={styles.document}>
-    <header><div><h3>{document.name}</h3><small>{Math.ceil(document.size / 1024)} KiB. Version {document.version}. Updated {new Date(document.updatedAt).toLocaleString()}.</small></div><Tag>{draft ? 'Unsaved changes' : document.allowAgentContext ? 'Excerpt approved' : 'Agent use off'}</Tag></header>
+    <header><div><h3>{document.title || document.name}</h3><small>{document.name}. {Math.ceil(document.size / 1024)} KiB. Version {document.version}. Processing: {document.extractionStatus}. Updated {new Date(document.updatedAt).toLocaleString()}.</small></div><Tag>{draft ? 'Unsaved changes' : document.allowAgentContext ? 'Excerpt approved' : 'Agent use off'}</Tag></header>
     <fieldset className={styles.fieldset} disabled={busy}>
       <div className={styles.toolbar}><a className="text-link" href={`/api/context/files/${encodeURIComponent(document.id)}/download`} download><Download size={14} />Download my original</a></div>
       {conflict && <div className={styles.notice} role="status"><strong>This file changed in another session.</strong><p>Your draft is preserved. Review the current saved excerpt before saving again.</p><details><summary>Current saved excerpt and permissions</summary><p className={styles.extracted}>{document.reviewedExcerpt || 'No approved excerpt.'}</p><p>Agent use: {document.allowAgentContext ? 'On' : 'Off'}. Original sharing: {document.allowOriginalShare ? 'On' : 'Off'}.</p></details><div className={styles.toolbar}><Button kind="secondary" onClick={() => { setDraft(null); setBaseVersion(document.version); }}>Use saved values</Button><Button kind="secondary" onClick={() => setBaseVersion(document.version)}>I reviewed the changes. Keep my draft.</Button></div></div>}
@@ -138,8 +144,15 @@ function DocumentCard({ document, state, busy, perform, onSaved, onDeleted }: {
         setDraft(null);
         setBaseVersion(saved.version);
       }, 'Your reviewed excerpt and file permissions have been saved.'); }}>
+        <Field label={`Title for ${document.name}`}><input value={form.title || ''} maxLength={120} required onChange={event => update('title', event.target.value)} /></Field>
+        <Field label={`Purpose for ${document.name}`} hint="Private metadata for your own organization."><textarea value={form.description || ''} maxLength={500} rows={2} onChange={event => update('description', event.target.value)} /></Field>
         <Field label={`Reviewed agent excerpt for ${document.name}`} hint={`${form.reviewedExcerpt.length} of 1,200 characters. Include only information you want a permitted agent to use or exchange.`}><textarea rows={5} maxLength={1200} value={form.reviewedExcerpt} onChange={event => { update('reviewedExcerpt', event.target.value); }} /></Field>
-        <label className="checkline"><input type="checkbox" checked={form.allowAgentContext} disabled={!form.allowAgentContext && !canEnableContext} onChange={event => update('allowAgentContext', event.target.checked)} /><span>Allow my agent to use and exchange this reviewed excerpt.</span></label>
+        <Field label={`Excerpt sharing scope for ${document.name}`} hint="This choice applies to the reviewed excerpt only. The original stays private."><select value={form.sharingScope || 'ask-first'} onChange={event => update('sharingScope', event.target.value as ContextDocument['sharingScope'])}>
+          <option value="private-agent">Private to me and my agent</option><option value="authorized-counterpart">Authorized matching counterparts</option><option value="ask-first">Ask me first</option><option value="public">Approved public excerpt</option>
+        </select></Field>
+        <p className="small-copy">Private and ask-first excerpts are withheld from counterpart agents. To authorize an exchange, explicitly select authorized matching counterparts and save. Public excerpt scope also needs the review below. It does not publish anything to ENS, Arkiv or a public URL.</p>
+        {form.sharingScope === 'public' && <label className="checkline"><input type="checkbox" checked={form.publicExcerptApproved === true} onChange={event => update('publicExcerptApproved', event.target.checked)} /><span>I reviewed this exact excerpt and approve it for public excerpt scope. I understand the original file remains private.</span></label>}
+        <label className="checkline"><input type="checkbox" checked={form.allowAgentContext} disabled={!form.allowAgentContext && !canEnableContext} onChange={event => update('allowAgentContext', event.target.checked)} /><span>Approve agent use of this reviewed excerpt within its selected scope.</span></label>
         <p className="small-copy">A nonempty reviewed excerpt, saved profile AI consent and a current ENS policy allowing document context are required. The server checks live permission for each use. <Link className="text-link" href="/agent">Manage agent policy</Link></p>
         <label className="checkline"><input type="checkbox" checked={form.allowOriginalShare} onChange={event => update('allowOriginalShare', event.target.checked)} /><span>Allow me to explicitly share this original file inside an authorized introduction room.</span></label>
         <p className="small-copy">This permission alone does not share a file. Sharing requires a separate action below and fresh protected room checks.</p>

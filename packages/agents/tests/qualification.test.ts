@@ -147,7 +147,7 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
 
   it("rejects fabricated references and incomplete category rubrics", async () => {
     for (const malformed of ["reference", "rubric"]) {
-      const fixture = fixtureProvider(data => { const output = turn(data); if (malformed === "reference") output.evidence[0].quote = "not in the source"; else output.findings.pop(); return output; });
+      const fixture = fixtureProvider(data => { const output = turn(data); if (malformed === "reference") output.evidence[0].quote = "not in the source"; else output.findings[3] = { ...output.findings[0] }; return output; });
       await expect(new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input())).rejects.toMatchObject({ code: "output" });
       expect(fixture.calls).toHaveLength(1);
     }

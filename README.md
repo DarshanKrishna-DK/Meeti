@@ -172,6 +172,18 @@ Get an Arkiv access key through the links in the [official networks hub](https:/
 
 ### 5. Install and verify the embedding model
 
+#### Optional private Supabase originals
+
+The application supports the official `@supabase/supabase-js` SDK for encrypted file originals. This does not migrate accounts, sessions, policies, metadata or conversation history from SQLite. Keep one persistent Node backend and its original encryption key. A Supabase project URL alone does not make the current backend suitable for Vercel serverless instances.
+
+1. Use your own Supabase project. In its Connect or API settings, copy the project HTTPS URL into `SUPABASE_URL` in `.env.local`.
+2. Put its server-only service-role key in `SUPABASE_SERVICE_ROLE_KEY`. Never expose that key through a `NEXT_PUBLIC_*` variable or browser request. Public frontend configuration, when needed, uses only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+3. Create a Storage bucket named `meeti-context`. Keep it private, limit object size to 2097152 bytes and restrict its MIME type to `application/octet-stream`. Do not add anonymous or authenticated-client object access policies. The application checks these bucket settings before reads and writes.
+4. Set `SUPABASE_STORAGE_ENABLED=true`, preserve `DATA_ENCRYPTION_KEY`, and restart the backend. New originals are encrypted before upload. Existing encrypted SQLite originals remain readable. An unavailable cloud provider produces an error rather than silently substituting storage.
+5. Upload a synthetic TXT file through **Your profile**, download it as its owner, and check that another independently authenticated account cannot read it. Do not use a permanent public object URL. Storage credentials and local evidence remain ignored by Git.
+
+The current project passed a live two-account cloud storage check on 6 November 2026: upload, owner download, foreign-account denial, anonymous denial and cleanup. This proves the storage boundary only. There is no configured primary Postgres account store yet.
+
 With Ollama running, open a terminal and run:
 
 ~~~powershell
@@ -281,6 +293,10 @@ Replace both arguments with your own values. This only reads a quote. Registrati
 In Agent Studio, find **Use my existing agent identity**, enter the complete agent name (for example, agent.yourname.eth) and its separate delegate address. Preview the current public policy, network, owner, permitted actions and expiry. Confirm import only after reviewing those values. Meeti re-reads ENS before saving the exact current policy version. Revoked, expired, changed, unowned or unsupported identities are denied. Import does not restore private profile data or write a chain transaction.
 
 #### Do new users need to pay for ENS?
+
+Agent Studio also offers **Open name request** under the configured Sepolia project parent. Set `ENS_PROJECT_PARENT` and the actual owner wallet as `ENS_PROJECT_ISSUER`. A user explicitly approves the public name-to-wallet association before reserving a normalized label. The issuer reviews branch setup and each issuance transaction using its own wallet. Submitted transactions remain pending until confirmed receipts and current registry read-back agree. The selected `meeti-demo.eth` branch preparation is implemented, but its new issuance branch has not been signed or deployed.
+
+The recipient-only child registry removes issuer roles at that child level. The ancestor owner retains its documented ancestor powers. This is not a fully trustless parent. No user's private key is requested, no server signing key is configured, and there is no automatic sponsorship of recipient wallet gas. A zero registration fee does not remove test gas, parent renewal or hosting requirements.
 
 A name is not needed to sign in or save a private profile. Agent discovery and publication need genuine ENSv2 authorization. The current demo uses Sepolia, where registration uses freely minted mock test USDC and test ETH for gas. Mainnet names involve real registration, renewal and network fees. An existing mainnet name does not automatically establish ownership of the same Sepolia name. Use the official tutorial linked above for registration and inspect every transaction.
 
@@ -392,6 +408,12 @@ The three existing live fictional records have an approved twenty-four-hour life
 
 ## Current status
 
+The current flow additionally includes owner-reviewed assisted intake, extended private profile fields, file titles and purpose, explicit excerpt scopes, persisted bounded qualification dialogues and owner questions, deterministic meeting proposals and a leased discovery worker. Start the optional persistent worker in a second terminal with `npm run worker:discovery`. Each user must enable scheduled discovery and approve provider processing. It polls due jobs every minute, processes at most two per tick and limits account attempts; a browser tab or Vercel request is not this worker. Search now and material publication updates remain available. Qualification is started for a selected candidate, not every possible user pair.
+
+Both owners review the same introduction version before exchanging permitted availability. Time negotiation checks real interval overlap and matching duration, and invalidates stale slot confirmations. While World is paused, the interface can show a slot awaiting required verification. It cannot claim final meeting agreement, create a private room, send an invitation or invent a video link.
+
+Latest live bounded qualification check: genuine Arkiv reads, six current ENS checks and two actual `openai/gpt-oss-20b` messages completed. The configured one-round test ended at its round limit. This is not a qualified introduction or independent two-device acceptance. Public ENSIP-26 endpoints require an authorized HTTPS deployment; ERC-8004/ENSIP-25 transaction preparation and verification exist, but no new registration or attestation has been signed for the new onboarding flow.
+
 | Area | Evidence and remaining boundary |
 |---|---|
 | Authentication and private profiles | Real EIP-4361 wallet signatures, browser-bound nonce/replay checks, persisted tour and guided profile setup; encrypted at rest |
@@ -457,7 +479,7 @@ Run npm run demo:doctor -- --target=vercel to see the current deployment blocker
 
 Browser tests run the optimized production build with an isolated database and port 3198. Run npm run build before npm run test:e2e. Stop any server using the same build before rebuilding. Browser tests do not use the development hot-reload server. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to an installed Chromium executable if needed. Fixture checks do not establish live sponsor success. Real-provider drivers remain separate and do not authorize extra public writes.
 
-Latest local validation on 6 November 2026: **413 unit/integration tests across twenty-one files and all 30 optimized-production browser cases passed**, together with lint, type generation, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, generated-EOA signed wallet login, replay denial, independent owners, guided profile privacy, persisted tour, session races, draft conflicts, time zones, navigation, WebGL and SVG fallback. New checks cover real PDF extraction, file tenancy and version conflicts, link permissions, policy history, both-theme route samples and reduced-motion strap wrapping. Tested desktop hero bounds end at 720px in a 1280 by 720 viewport and 900px in a 1440 by 900 viewport; navigation is 72px desktop and 64px mobile. The controlled browser wallet signs real cryptographic challenges; this does not establish testing of the installed MetaMask extension. Physical-phone, deployed-origin and fresh live chain-writing checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
+Latest local validation on 6 November 2026: **545 unit/integration tests across thirty-four files and all 34 optimized-production browser cases passed**, together with lint, type generation, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, generated-EOA signed wallet login, replay denial, independent owners, guided profile privacy, persisted tour, session races, draft conflicts, time zones, navigation, WebGL and SVG fallback. New checks cover real PDF extraction, file tenancy and version conflicts, link permissions, policy history, both-theme route samples and reduced-motion strap wrapping. Tested desktop hero bounds end at 720px in a 1280 by 720 viewport and 900px in a 1440 by 900 viewport; navigation is 72px desktop and 64px mobile. The controlled browser wallet signs real cryptographic challenges; this does not establish testing of the installed MetaMask extension. Physical-phone, deployed-origin and fresh live chain-writing checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
 
 <details>
 <summary><strong>Project map and repository hygiene</strong></summary>

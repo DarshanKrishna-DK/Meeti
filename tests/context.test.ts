@@ -210,13 +210,13 @@ describe('encrypted private document storage and owner boundaries', () => {
     const originalFingerprint = contextFingerprint(owner.id);
     expect(originalFingerprint).toBe('');
     expect(originalFingerprint).toBe(contextFingerprint(owner.id));
-    document = await review(owner, document, { reviewedExcerpt: 'Only this owner-reviewed excerpt.', allowAgentContext: true });
+    document = await review(owner, document, { reviewedExcerpt: 'Only this owner-reviewed excerpt.', allowAgentContext: true, sharingScope: 'authorized-counterpart' });
     expect(document.version).toBe(2);
     expect(contextFingerprint(owner.id)).not.toBe(originalFingerprint);
     expect(approvedDocumentContext(owner.id)).toBe('Only this owner-reviewed excerpt.');
     expect(approvedDocumentContext(owner.id)).not.toContain(raw);
     expect(approvedDocumentContext(owner.id)).not.toContain(document.name);
-    const current = { expectedVersion: document.version, reviewedExcerpt: document.reviewedExcerpt, allowAgentContext: true, allowOriginalShare: false };
+    const current = { expectedVersion: document.version, reviewedExcerpt: document.reviewedExcerpt, allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: false };
     const unchanged = await call(owner, `context/files/${document.id}/update`, current);
     expect((await unchanged.json()).data.version).toBe(2);
     expect((await call(owner, `context/files/${document.id}/update`, { ...current, expectedVersion: 1 })).status).toBe(409);
@@ -225,7 +225,7 @@ describe('encrypted private document storage and owner boundaries', () => {
     expect((await call(owner, `context/files/${document.id}/update`, { ...current, reviewedExcerpt: '' })).status).toBe(400);
     for (let index = 0; index < 2; index++) {
       const next = await upload(owner, 'Private raw');
-      await review(owner, next, { reviewedExcerpt: 'b'.repeat(1200), allowAgentContext: true });
+      await review(owner, next, { reviewedExcerpt: 'b'.repeat(1200), allowAgentContext: true, sharingScope: 'authorized-counterpart' });
     }
     expect(approvedDocumentContext(owner.id).length).toBeLessThanOrEqual(1500);
     expect((await call(owner, `context/files/${document.id}/delete`, { expectedVersion: 2 })).status).toBe(200);
@@ -356,7 +356,7 @@ describe('original file grants require current protected introduction authority'
     const grantId = saveOriginalShare({ documentId: document.id, ownerId: owner.id, recipientId: recipient.id, proposalId: p.id,
       roomId: p.room.id, version: document.version, policyDigest: 'test-only-digest', proposalDigest: p.digest, expiresAt: new Date(Date.now() + 60000).toISOString() });
     expect(recipientShare(recipient.id, grantId).documentId).toBe(document.id);
-    updateDocument(owner.id, document.id, { expectedVersion: document.version, reviewedExcerpt: 'Changed review', allowAgentContext: true, allowOriginalShare: true }, () => {});
+    updateDocument(owner.id, document.id, { expectedVersion: document.version, reviewedExcerpt: 'Changed review', allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: true }, () => {});
     expect(privateSnapshotDigest(owner.id)).not.toBe(snapshot);
     expect(() => recipientShare(recipient.id, grantId)).toThrow('not found');
     const stale = await call(owner, `context/files/${document.id}/share`, { expectedVersion: document.version, proposalId: p.id });

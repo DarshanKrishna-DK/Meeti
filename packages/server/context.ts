@@ -11,6 +11,7 @@ import { requireWorldCapability } from './capabilities';
 
 const versionSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1);
 const uploadSchema = z.object({ name: z.string().min(1).max(160),
+  title: z.string().trim().min(1).max(120).optional(), description: z.string().max(500).optional(),
   mimeType: z.enum(['application/pdf', 'text/plain', 'text/markdown']),
   contentBase64: z.string().min(4).max(Math.ceil(MAX_DOCUMENT_BYTES / 3) * 4) }).strict();
 function ok(data: unknown): Response {
@@ -116,7 +117,7 @@ export async function handleContext(request: Request, key: string, body?: unknow
     const extraction = input.mimeType === 'application/pdf' ? await extractPrivatePdf(decoded.bytes)
       : { extractionStatus: decoded.text?.trim() ? 'ready' as const : 'no-text' as const, extractedText: decoded.text?.slice(0, MAX_EXTRACTED_TEXT) || '' };
     checkSession();
-    const document = await createStoredDocument(actor.id, { name: input.name, mimeType: input.mimeType, ...extraction }, decoded.bytes, checkSession);
+    const document = await createStoredDocument(actor.id, { name: input.name, mimeType: input.mimeType, title: input.title, description: input.description, ...extraction }, decoded.bytes, checkSession);
     audit(actor.id, 'private_document', 'created', 'Stored an encrypted private original and a bounded extracted preview. Agent context and original sharing remain disabled.');
     return ok(document);
   }
@@ -130,6 +131,8 @@ export async function handleContext(request: Request, key: string, body?: unknow
   const [, id, action] = match;
   if (action === 'update') {
     const input = z.object({ expectedVersion: versionSchema, reviewedExcerpt: z.string().max(MAX_REVIEWED_EXCERPT),
+      title: z.string().trim().min(1).max(120).optional(), description: z.string().max(500).optional(),
+      sharingScope: z.enum(['private-agent', 'authorized-counterpart', 'ask-first', 'public']).optional(), publicExcerptApproved: z.boolean().optional(),
       allowAgentContext: z.boolean(), allowOriginalShare: z.boolean() }).strict().parse(body);
     const document = updateDocument(actor.id, id, input, checkSession);
     audit(actor.id, 'private_document', 'updated', 'Updated private document review and sharing permissions. Existing original grants were invalidated when the version changed.');

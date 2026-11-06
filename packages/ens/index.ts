@@ -142,7 +142,7 @@ function requireCondition(value: unknown, reason: string): asserts value { if (!
 function transientAuthorityRead(error: unknown): boolean {
   let cause = error as { code?: unknown; status?: unknown; name?: string; cause?: unknown } | undefined;
   for (let depth = 0; cause && depth < 10; depth++, cause = cause.cause as typeof cause) {
-    if (cause.code === -32001 || cause.status === 429 || cause.status === 503 || cause.name === "TimeoutError") return true;
+    if (cause.code === -32001 || cause.code === -32005 || cause.status === 429 || cause.status === 503 || cause.name === "TimeoutError") return true;
   }
   return false;
 }
@@ -298,7 +298,7 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
         return checkAuthorityAttempt(request, 1);
       }
       const reason = error instanceof Error ? error.message : "ens_unavailable";
-      result.reason = /^[a-z][a-z0-9_]{0,80}$/.test(reason) ? reason : "ens_verification_failed";
+      result.reason = transientAuthorityRead(error) ? "ens_unavailable" : /^[a-z][a-z0-9_]{0,80}$/.test(reason) ? reason : "ens_verification_failed";
     }
     result.checkedAt = new Date(now()).toISOString();
     return result;

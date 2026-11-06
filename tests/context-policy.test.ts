@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDatabase, db, profile, saveAgent } from '../packages/server/db';
-import { encrypt, hash } from '../packages/server/crypto';
+import { decrypt, encrypt, hash } from '../packages/server/crypto';
 import { approvedContextFields, contextFieldAllowed, privateSnapshotDigest } from '../packages/server/context-policy';
-import { createDocument, updateDocument } from '../packages/server/context-store';
+import { createDocument, updateDocument, ownedDocument } from '../packages/server/context-store';
 import { participant, publicIntent } from '../packages/server/policy';
 import { profileSchema } from '../packages/server/validation';
 import { policyHistory } from '../packages/server/policy-history';
@@ -31,6 +31,32 @@ beforeEach(() => {
 afterEach(() => { closeDatabase(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('context projection and current permission rules', () => {
+  it.each(['private-agent', 'ask-first'] as const)('withholds %s excerpts from counterpart projections even with class permission', sharingScope => {
+    const doc = createDocument(id, { name: 'notes.txt', mimeType: 'text/plain', extractedText: 'Owner reference', extractionStatus: 'ready', title: 'My context', description: 'Help my agent understand me.' }, Buffer.from('Owner reference'), () => {});
+    expect(doc).toMatchObject({ title: 'My context', description: 'Help my agent understand me.', sharingScope: 'private-agent', publicExcerptApproved: false });
+    value.aiConsent = true; saveProfile(); a.policy.allowedFields.push('documentContext');
+    updateDocument(id, doc.id, { expectedVersion: 1, reviewedExcerpt: 'Private approved excerpt', allowAgentContext: true, allowOriginalShare: false, sharingScope }, () => {});
+    expect(approvedContextFields(id, value)).toEqual([]); expect(contextFieldAllowed(id, 'documentContext:anything', value, a.policy)).toBe(false);
+  });
+  it('requires exact public-excerpt review and withdraws counterpart context on scope changes', () => {
+    const doc = createDocument(id, { name: 'notes.txt', mimeType: 'text/plain', extractedText: 'Owner reference', extractionStatus: 'ready' }, Buffer.from('Owner reference'), () => {});
+    value.aiConsent = true; saveProfile();
+    const review = { expectedVersion: 1, reviewedExcerpt: 'I build tools.', allowAgentContext: true, allowOriginalShare: false, sharingScope: 'public' as const };
+    expect(() => updateDocument(id, doc.id, review, () => {})).toThrow('Approve the exact reviewed excerpt');
+    const saved = updateDocument(id, doc.id, { ...review, publicExcerptApproved: true }, () => {});
+    expect(approvedContextFields(id, value)[0].value).toBe('I build tools.');
+    const fingerprint = privateSnapshotDigest(id);
+    updateDocument(id, doc.id, { ...review, expectedVersion: saved.version, sharingScope: 'ask-first' }, () => {});
+    expect(approvedContextFields(id, value)).toEqual([]); expect(privateSnapshotDigest(id)).not.toBe(fingerprint);
+  });
+  it('treats files without a stored scope as ask-first rather than transferring legacy approval', () => {
+    const doc = createDocument(id, { name: 'notes.txt', mimeType: 'text/plain', extractedText: 'legacy', extractionStatus: 'ready' }, Buffer.from('legacy'), () => {});
+    const row = ownedDocument(id, doc.id).row;
+    const legacy = decrypt<Record<string, unknown>>(row.metadata, `context-metadata:${id}:${doc.id}`);
+    delete legacy.sharingScope; delete legacy.publicExcerptApproved; legacy.allowAgentContext = true; legacy.reviewedExcerpt = 'Old approved excerpt';
+    db().prepare('UPDATE private_context_documents SET metadata=? WHERE id=?').run(encrypt(legacy, `context-metadata:${id}:${doc.id}`), doc.id);
+    value.aiConsent = true; expect(ownedDocument(id, doc.id).document.sharingScope).toBe('ask-first'); expect(approvedContextFields(id, value)).toEqual([]);
+  });
   it('keeps recommended permissions useful without opting into private context', () => {
     expect(DEFAULT_POLICY_ACTIONS).toEqual(expect.arrayContaining(['discover', 'publish', 'evaluate', 'negotiate', 'introduce', 'message']));
     expect(DEFAULT_POLICY_FIELDS).not.toContain('documentContext'); expect(DEFAULT_POLICY_FIELDS).not.toContain('socialLinks');
@@ -53,14 +79,14 @@ describe('context projection and current permission rules', () => {
     const doc = createDocument(id, { name: 'private-resume.txt', mimeType: 'text/plain', extractionStatus: 'ready', extractedText: 'RAW PRIVATE RESUME contact@example.test' }, Buffer.from('RAW PRIVATE RESUME'), () => {});
     value.aiConsent = true; value.publicFields = []; saveProfile();
     expect(approvedContextFields(id, value)).toEqual([]);
-    updateDocument(id, doc.id, { expectedVersion: 1, reviewedExcerpt: 'I build developer tools.', allowAgentContext: true, allowOriginalShare: false }, () => {});
+    updateDocument(id, doc.id, { expectedVersion: 1, reviewedExcerpt: 'I build developer tools.', allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: false }, () => {});
     const [field] = approvedContextFields(id, value);
     expect(field.id).toMatch(/^documentContext:[a-f0-9]{64}$/);
     expect(field.value).toBe('I build developer tools.'); expect(field.providerAllowed).toBe(true);
     expect(JSON.stringify(field)).not.toContain('RAW PRIVATE'); expect(JSON.stringify(field)).not.toContain('private-resume');
     expect(contextFieldAllowed(id, field.id, value, a.policy)).toBe(false);
     a.policy.allowedFields.push('documentContext'); expect(contextFieldAllowed(id, field.id, value, a.policy)).toBe(true);
-    updateDocument(id, doc.id, { expectedVersion: 2, reviewedExcerpt: 'I build climate tools.', allowAgentContext: true, allowOriginalShare: false }, () => {});
+    updateDocument(id, doc.id, { expectedVersion: 2, reviewedExcerpt: 'I build climate tools.', allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: false }, () => {});
     expect(contextFieldAllowed(id, field.id, value, a.policy)).toBe(false);
     value.aiConsent = false; expect(approvedContextFields(id, value)).toEqual([]);
   });
@@ -81,9 +107,9 @@ describe('context projection and current permission rules', () => {
     expect(privateSnapshotDigest(id)).toBe(hash(JSON.stringify(profile(id))));
     const doc = createDocument(id, { name: 'notes.txt', mimeType: 'text/plain', extractedText: 'private', extractionStatus: 'ready' }, Buffer.from('private'), () => {});
     expect(privateSnapshotDigest(id)).toBe(hash(JSON.stringify(profile(id))));
-    updateDocument(id, doc.id, { expectedVersion: 1, reviewedExcerpt: 'Reviewed facts', allowAgentContext: true, allowOriginalShare: false }, () => {});
+    updateDocument(id, doc.id, { expectedVersion: 1, reviewedExcerpt: 'Reviewed facts', allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: false }, () => {});
     const reviewed = privateSnapshotDigest(id); expect(reviewed).not.toBe(hash(JSON.stringify(profile(id))));
-    updateDocument(id, doc.id, { expectedVersion: 2, reviewedExcerpt: 'Reviewed facts', allowAgentContext: true, allowOriginalShare: true }, () => {});
+    updateDocument(id, doc.id, { expectedVersion: 2, reviewedExcerpt: 'Reviewed facts', allowAgentContext: true, sharingScope: 'authorized-counterpart', allowOriginalShare: true }, () => {});
     expect(privateSnapshotDigest(id)).toBe(reviewed);
   });
 });

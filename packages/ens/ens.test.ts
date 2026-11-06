@@ -152,6 +152,15 @@ describe("ENSv2 authoritative checks", () => {
     expect(getBlock).toHaveBeenCalledTimes(2);
     expect(getBlock.mock.calls.every((parameters) => parameters.length === 1 && (parameters[0] as { blockTag: string }).blockTag === "latest")).toBe(true);
   });
+  it("classifies a persistent JSON-RPC rate limit as unavailable without granting authority", async () => {
+    const { client, readContract } = fixture();
+    const getChainId = vi.fn(async () => { throw Object.assign(new Error("Request exceeds defined limit."), { cause: { code: -32005 } }); });
+    client.getChainId = getChainId as PublicClient["getChainId"];
+    const result = await createEnsAuthorityProvider({ client, now: () => now }).checkAuthority(request);
+    expect(result).toMatchObject({ allowed: false, reason: "ens_unavailable" });
+    expect(getChainId).toHaveBeenCalledTimes(2);
+    expect(readContract).not.toHaveBeenCalled();
+  });
   it("prepares actual scoped grants and revocation without signing", async () => {
     const { provider, call } = fixture();
     const grant = await provider.prepareTransaction({ ...request, operation: "grant" });
