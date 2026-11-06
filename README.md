@@ -102,19 +102,42 @@ flowchart LR
 
 ## Get started
 
-### 1. Prepare the laptop
+### 1. Install the prerequisites
 
-Use **Node.js 24 or later**, npm and a writable persistent directory.
+The commands below use Windows PowerShell. Keep the project on a writable local drive.
+
+| Tool | Required action | Check in a new terminal |
+|---|---|---|
+| Git | Install from [git-scm.com](https://git-scm.com/downloads), then reopen the terminal | git --version |
+| Node.js | Install Node.js 24 or a compatible newer release from [nodejs.org](https://nodejs.org/en/download); npm is included | node --version and npm --version |
+| Ollama | Install from [ollama.com](https://ollama.com/download), launch the application and keep it running for local embeddings | ollama --version |
+| Browser | Use a current browser; install MetaMask from its [official download page](https://metamask.io/download/) for wallet actions | Unlock the wallet yourself when needed |
+
+If PowerShell blocks npm.ps1, use npm.cmd in place of npm in the commands below. A global execution-policy change is not required. Never enter a recovery phrase, wallet password or private key into Meeti or its terminal.
+
+### 2. Clone the source and install dependencies
+
+Choose the parent directory yourself, then run:
 
 ~~~powershell
+git clone https://github.com/DarshanKrishna-DK/Meeti.git
+cd Meeti
+node --version
+npm --version
 npm ci
-npm run setup
-npm run db:migrate
 ~~~
 
-Setup creates .env.local only when missing. It preserves existing credentials. Use [.env.example](.env.example) as the nonsecret reference. Preserve the existing encryption key when reusing an encrypted database.
+The remaining commands must run inside the folder containing package.json. If you already have this checkout, use it and preserve your local changes instead of cloning over it. npm ci uses package-lock.json; no separate frontend or backend install is needed.
 
-### 2. Configure real services
+### 3. Create local configuration and private storage
+
+~~~powershell
+npm run setup
+~~~
+
+Setup creates .env.local from [.env.example](.env.example) only when missing, generates a random DATA_ENCRYPTION_KEY and creates .local-data. Open .env.local in your editor. Do not replace the generated key with the blank example, and do not regenerate a key for an existing encrypted database. Back up the database and key together in private storage. No provider credentials are installed by this command.
+
+### 4. Configure real services
 
 | Service | Required configuration | Boundary |
 |---|---|---|
@@ -130,7 +153,85 @@ The current laptop uses **Ollama nomic-embed-text:v1.5, 768 dimensions**, and co
 
 Normal publishing uses the connected wallet after review. A server wallet private key is not required. ARKIV_PRIVATE_KEY belongs only to a separately approved local test executor and must not be deployed to a frontend. Never put secrets into NEXT_PUBLIC_* variables.
 
-### 3. Run the application
+For the currently verified Groq model, create your own key in [Groq Console](https://console.groq.com/keys), confirm the model is enabled for your organization, and set the following nonsecret configuration plus your private AI_API_KEY. These are explicit provider settings, not an automatic fallback:
+
+~~~dotenv
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=openai/gpt-oss-20b
+AI_RESPONSE_FORMAT=json_schema
+AI_TASK_RESPONSE_FORMATS={"evaluate_compatibility":"json_schema","agent_clarification":"json_schema"}
+AI_REASONING_EFFORT=low
+AI_MAX_OUTPUT_TOKENS=4096
+AI_INPUT_USD_PER_MILLION=0.075
+AI_OUTPUT_USD_PER_MILLION=0.30
+AI_MAX_REQUESTS=24
+AI_MAX_COST_USD=0.05
+~~~
+
+The token prices are the documented model prices checked on 6 November 2026. Your account plan, model permissions and rate limits still apply. Review [current Groq pricing and model support](https://console.groq.com/docs/model/openai/gpt-oss-20b) before changing providers or enabling paid usage. Keep the key server-side and do not paste it into source code.
+
+Get an Arkiv access key through the links in the [official networks hub](https://hub.arkiv.network/networks). Set ARKIV_ACCESS_KEY in .env.local. Rabdi chain ID is 7794095; the SDK derives its keyed URL from this key. Use the hub's current faucet for test GLM in the wallet that will publish. ENS operations use Sepolia 11155111 and require test ETH. Do not send real funds to either testnet setup.
+
+### 5. Install and verify the embedding model
+
+With Ollama running, open a terminal and run:
+
+~~~powershell
+ollama pull nomic-embed-text:v1.5
+ollama list
+~~~
+
+If Ollama is not already listening, run ollama serve in a separate terminal. If it reports the port is already in use, check the existing Ollama application instead of starting competing servers. Keep the service running while Meeti uses local embeddings.
+
+Read the actual installed digest using PowerShell:
+
+~~~powershell
+$modelInventory = Invoke-RestMethod http://127.0.0.1:11434/api/tags
+$modelInventory.models | Select-Object name, digest
+~~~
+
+Copy the exact digest for nomic-embed-text:v1.5 into EMBEDDING_MODEL_REVISION. Confirm these fields in .env.local:
+
+~~~dotenv
+EMBEDDING_PROTOCOL=ollama
+EMBEDDING_BASE_URL=http://127.0.0.1:11434
+EMBEDDING_MODEL=nomic-embed-text:v1.5
+EMBEDDING_DIMENSIONS=768
+EMBEDDING_INPUT_USD_PER_MILLION=0
+EMBEDDING_MAX_COST_USD=0
+EMBEDDING_MAX_REQUESTS=48
+EMBEDDING_TIMEOUT_MS=30000
+EMBEDDING_MAX_BATCH=16
+EMBEDDING_RETRIES=1
+~~~
+
+EMBEDDING_MODEL_REVISION must contain your actual digest, not a placeholder. A tag can point to a different manifest on another installation. Calibrate the configured model and format using only the development set:
+
+~~~powershell
+node --env-file=.env.local --import tsx packages/matching/evaluate-live.ts calibrate
+~~~
+
+Copy the returned threshold into MATCHING_MIN_COSINE, modelRevision into MATCHING_CALIBRATED_REVISION and format into MATCHING_CALIBRATED_FORMAT. Keep EMBEDDING_MODEL_REVISION equal to that modelRevision. Save .env.local. This command calls your real local embedding model and does not publish anything or call the paid reasoning provider. A model/revision/format change needs a fresh development calibration; do not tune against held-out outcomes to force a pass.
+
+Optionally evaluate the held-out examples separately:
+
+~~~powershell
+npm run matching:live -- embeddings-v2
+~~~
+
+The existing measured threshold is evidence for its recorded model manifest, not a universal default. A failed calibration or unavailable model is a setup failure, not permission to substitute fake embeddings.
+
+### 6. Initialize the database
+
+After saving the configuration, run:
+
+~~~powershell
+npm run db:migrate
+~~~
+
+This creates the schema at DATABASE_PATH. It does not create funded wallets, ENS names, public intents, matches or verification. Never copy .env.local or .local-data into GitHub. If a database was created with another encryption key, restore its matching key rather than deleting data to hide the error.
+
+### 7. Run the application
 
 ~~~powershell
 npm run dev
@@ -144,6 +245,42 @@ npm run start
 ~~~
 
 Keep the laptop awake while it supplies the backend or model. A healthy API is not, by itself, end-to-end proof.
+
+In a second terminal, check the actual local server:
+
+~~~powershell
+npm run demo:doctor
+Invoke-RestMethod http://127.0.0.1:3173/api/health
+~~~
+
+Keep the server terminal running. Stop it with Ctrl+C before switching between development and production or starting another server on port 3173. Configuration changes require a server restart. Do not run a production build over an active production server's .next directory.
+
+### 8. Create an account and complete the current setup
+
+This checkpoint uses an account followed by explicit wallet ownership linking. Create an account in the local interface, save your private profile and choose public visibility separately. Unlock MetaMask yourself, select the intended wallet and approve only the displayed ownership message. Connecting a wallet alone does not register an ENS name or authorize a public transaction.
+
+Use a real Sepolia ENSv2 parent name and the dedicated agent namespace/resolver setup for protected discovery. The independent CLI can inspect a registration quote without signing:
+
+~~~powershell
+node --env-file=.env.local --import tsx packages/ens/register-parent.ts quote your-test-name.eth YOUR_WALLET_ADDRESS
+~~~
+
+Replace both arguments with your own values. This only reads a quote. Registration, resolver/delegation changes and Arkiv publication require separately reviewed wallet transactions. Follow the [official ENSv2 Sepolia tutorial](https://docs.ens.domains/ensv2/tutorial-app-developers/) for current deployment details. Missing names or funding must remain visible blockers, rather than decorative identities.
+
+The upcoming guided MetaMask-first onboarding is not claimed by this checkpoint. The README will be updated again when that flow is implemented and verified.
+
+### Troubleshooting local startup
+
+| Symptom | Action |
+|---|---|
+| node or npm is not recognized | Reopen the terminal after installation and check PATH using the official installer |
+| Port 3173 is already in use | Reuse the healthy Meeti server or stop its own terminal; do not kill unrelated Node processes |
+| Wrong origin or session will not save | Use exactly APP_ORIGIN, including hostname and port; do not mix localhost and 127.0.0.1 |
+| Decryption failed | Restore the original DATA_ENCRYPTION_KEY for that database |
+| Embedding model/dimensions/revision mismatch | Verify Ollama inventory, pin its actual digest and rerun development calibration |
+| AI 401, 403 or 429 | Check the configured key, organization model access and provider quota; do not fabricate a result |
+| Empty discovery | Confirm an approved public intent is active, the scope is eligible and current ENS permissions pass; enable fictional records only for an intentional test |
+| World is paused | Expected until organizational access and real client registration are resolved |
 
 ## Try the demo
 
