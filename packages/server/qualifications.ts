@@ -9,7 +9,7 @@ import { resolveCurrentPublicAgentIdentityForUser } from './identity';
 import { HttpError, requireValue } from './security';
 import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationPublicIdentityBinding, type QualificationRow } from './qualification-context';
 import type { RunningStage } from './agent-runs';
-import { AgentError } from '../agents/src';
+import { AgentError, qualificationOutputDiagnostic } from '../agents/src';
 
 type RecordValue = NonNullable<ReturnType<typeof qualificationRecord>>;
 const versionInput = z.object({ version: z.number().int().positive() }).strict();
@@ -31,7 +31,10 @@ function current(record: RecordValue) {
   }
 }
 async function publicIdentityBinding(userId: string): Promise<QualificationPublicIdentityBinding> {
-  const result = await resolveCurrentPublicAgentIdentityForUser(userId), a = requireValue(agent(userId), 'Agent is unavailable.');
+  const result = await resolveCurrentPublicAgentIdentityForUser(userId).catch(error => {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, 'PUBLIC_IDENTITY_READ_UNAVAILABLE', 'The current public agent identity could not be read. Retry after the provider recovers.');
+  }), a = requireValue(agent(userId), 'Agent is unavailable.');
   if (result.ensName !== a.ensName || result.owner.toLowerCase() !== a.owner.toLowerCase() || result.observed.chainId !== 11155111
     || !['absent', 'valid'].includes(result.context.state) || !['absent', 'verified'].includes(result.association.state)
     || (result.context.state === 'valid' && !result.context.value) || (result.association.state === 'verified' && !result.association.identity)) {
@@ -72,6 +75,11 @@ function costLimit() { return Math.min(0.05, Number(process.env.AI_MAX_COST_USD 
 function remaining(value: QualificationData) {
   return Boolean(value.attempts && value.attempts.length < maxAttempts && value.attempts.reduce((sum, attempt) => sum + attempt.reservedCostUsd, 0) < costLimit());
 }
+function canRetry(value: QualificationData) {
+  // Older raw provider read failures lacked a retry classification. A manual retry still
+  // rechecks current state, live authority and the original durable request budget.
+  return remaining(value) && (value.retryable === true || value.failureCode === 'PROVIDER_UNAVAILABLE');
+}
 function recoverInterrupted(record: RecordValue) {
   if (record.row.state !== 'running' || (record.row.lease_until && Date.parse(record.row.lease_until) > Date.now())) return record;
   record.value.failureCode = 'QUALIFICATION_INTERRUPTED';
@@ -97,7 +105,7 @@ export function listQualificationDtos(userId: string) {
     const otherEns = agent(row.left_user === userId ? row.right_user : row.left_user)?.ensName || 'Unavailable agent';
     return { id, version: row.version, state, stopReason: value.result?.stopReason, otherEns, summary: summary(value), proposalId: value.proposalId || null,
       failureCode: value.failureCode || (state === 'blocked' ? 'CURRENT_AUTHORITY_REQUIRED' : null),
-      canRetry: currentValid && state === 'blocked' && value.retryable === true && remaining(value), attemptsUsed: value.attempts?.length ?? value.messages.length, maxAttempts,
+      canRetry: currentValid && state === 'blocked' && canRetry(value), attemptsUsed: value.attempts?.length ?? value.messages.length, maxAttempts,
       publicIdentity: value.publicIdentities ? { own: { context: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].context, association: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].association },
         counterpart: { context: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].context, association: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].association }, observation: 'checked_before_protected_actions' } : null,
       messages: value.messages.map(message => ({ id: message.id, speaker: message.agentId === value.snapshot.leftAgent ? agent(row.left_user)?.ensName || 'First agent' : agent(row.right_user)?.ensName || 'Second agent', content: message.message, createdAt: message.createdAt, round: message.round, evidence: message.evidence })),
@@ -137,7 +145,7 @@ async function execute(userId: string, id: string, version: number, checkSession
   const token = randomUUID();
   atomic(() => {
     const record = owned(userId, id); current(record); checkSession();
-    if (record.row.version !== version || !(retry ? record.row.state === 'blocked' && record.value.retryable === true && remaining(record.value) : ['queued', 'needs_owner'].includes(record.row.state))) throw new HttpError(409, 'QUALIFICATION_CHANGED', 'This conversation is not ready for this review.');
+    if (record.row.version !== version || !(retry ? record.row.state === 'blocked' && canRetry(record.value) : ['queued', 'needs_owner'].includes(record.row.state))) throw new HttpError(409, 'QUALIFICATION_CHANGED', 'This conversation is not ready for this review.');
     if (!record.value.attempts && record.row.state === 'needs_owner') {
       const completed = record.value.result;
       if (!completed || completed.state !== 'needs_owner' || completed.messages.length !== completed.round * 2
@@ -206,7 +214,8 @@ async function execute(userId: string, id: string, version: number, checkSession
   } catch (error) {
     const record = owned(userId, id);
     if (record.row.state === 'running' && record.row.lease_token === token) {
-      record.value.failureCode = error instanceof HttpError ? error.code : error instanceof AgentError ? `AGENT_${error.code}` : 'PROVIDER_UNAVAILABLE';
+      const outputDiagnostic = qualificationOutputDiagnostic(error);
+      record.value.failureCode = error instanceof HttpError ? error.code : error instanceof AgentError ? `AGENT_${error.code}${outputDiagnostic ? `_${outputDiagnostic}` : ''}` : 'PROVIDER_UNAVAILABLE';
       record.value.retryable = retryableFailure(error) && Boolean(record.value.attempts && remaining(record.value));
       persist(record, 'blocked'); db().prepare('UPDATE qualifications SET lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?').run(id, token);
     }

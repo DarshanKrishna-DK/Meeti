@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, Intent, Profile } from '../packages/shared/src';
-import { MeetiAgentService, OpenAICompatibleProvider, type QualificationInput, type QualificationResult } from '../packages/agents/src';
+import { AgentError, MeetiAgentService, OpenAICompatibleProvider, type QualificationInput, type QualificationResult } from '../packages/agents/src';
 const external = vi.hoisted(() => ({ qualify: vi.fn(), read: vi.fn(), fresh: vi.fn(), assess: vi.fn(), authority: vi.fn(), identity: vi.fn() }));
 vi.mock('../packages/server/policy', async original => ({ ...await original<typeof import('../packages/server/policy')>(), ai: () => ({ qualifyIntroduction: external.qualify }), arkiv: () => ({ readActive: external.read }), authority: external.authority }));
 vi.mock('../packages/server/discovery', () => ({ freshPublicIntent: external.fresh, assessPair: external.assess }));
@@ -55,7 +55,7 @@ function publicIdentity(userId: string, registered = false) {
     association: registered ? { state: 'verified', identity } : { state: 'absent' },
     observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() }, authorityVerified: false, humanVerified: false };
 }
-function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false) {
+function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false, duplicateFirstCriterion = false) {
   let calls = 0;
   const transport = vi.fn<typeof fetch>(async (_url, init) => {
     calls++;
@@ -67,7 +67,7 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
     const evidence = [data.self, data.other].map(p => ({ reference: p.evidence[0].reference, quote: p.evidence[0].value }));
     const missing = missingFirstRound && data.round === 1;
     return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      message: 'Fixture grounded qualification', findings: data.rubric.map(c => ({ criterionId: c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidenceReferences: missing && c.id === 'scope_expectations' ? [] : evidence.map(e => e.reference) })),
+      message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidenceReferences: missing && c.id === 'scope_expectations' ? [] : evidence.map(e => e.reference) })),
       peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds: [], evidence,
     }) } }], usage: { prompt_tokens: 2, completion_tokens: 2 } }));
   });
@@ -80,6 +80,102 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
   return transport;
 }
 describe('persisted qualification boundaries with fixture providers', () => {
+  it('classifies a transient identity read before a retry model call and preserves the original request ledger', async () => {
+    const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
+    const first = listQualificationDtos(left.id)[0], attempts = structuredClone(qualificationRecord(first.id)!.value.attempts);
+    external.identity.mockRejectedValueOnce(new Error('PRIVATE_IDENTITY_RPC_BODY'));
+    await expect(retryQualification(left.id, first.id, { version: first.version }, () => {})).rejects.toMatchObject({ status: 503, code: 'PUBLIC_IDENTITY_READ_UNAVAILABLE' });
+    const failed = listQualificationDtos(left.id)[0], saved = qualificationRecord(first.id)!;
+    expect(failed).toMatchObject({ state: 'blocked', failureCode: 'PUBLIC_IDENTITY_READ_UNAVAILABLE', attemptsUsed: 1, canRetry: true });
+    expect(failed.messages).toEqual([]); expect(saved.value.attempts).toEqual(attempts); expect(saved.value.retryable).toBe(true);
+    expect(JSON.stringify({ dto: failed, saved: saved.value })).not.toContain('PRIVATE_IDENTITY_RPC_BODY'); expect(transport).toHaveBeenCalledTimes(1);
+    await retryQualification(right.id, failed.id, { version: failed.version }, () => {});
+    expect(listQualificationDtos(left.id)[0]).toMatchObject({ state: 'proposed', attemptsUsed: 3 });
+    expect(qualificationRecord(first.id)!.value.attempts![0]).toEqual(attempts![0]); expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers a legacy generic read failure with a false retry flag only through fresh authority checks', async () => {
+    const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
+    const initial = listQualificationDtos(left.id)[0], record = qualificationRecord(initial.id)!;
+    record.value.failureCode = 'PROVIDER_UNAVAILABLE'; record.value.retryable = false;
+    db().prepare('UPDATE qualifications SET data=? WHERE id=?').run(encrypt(record.value, `qualification:${initial.id}`), initial.id);
+    const before = listQualificationDtos(left.id)[0]; expect(before.canRetry).toBe(true);
+    const freshReads = external.fresh.mock.calls.length, identityReads = external.identity.mock.calls.length;
+    await retryQualification(right.id, before.id, { version: before.version }, () => {});
+    expect(external.fresh.mock.calls.length).toBeGreaterThan(freshReads); expect(external.identity.mock.calls.length).toBeGreaterThan(identityReads);
+    expect(listQualificationDtos(left.id)[0]).toMatchObject({ state: 'proposed', attemptsUsed: 3 });
+    expect(qualificationRecord(initial.id)!.value.attempts![0]).toEqual(record.value.attempts![0]); expect(transport).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['ens-revoked', 'identity-denied'] as const)('refuses a legacy generic recovery after current %s without another model request', async failure => {
+    const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
+    const initial = listQualificationDtos(left.id)[0], record = qualificationRecord(initial.id)!;
+    record.value.failureCode = 'PROVIDER_UNAVAILABLE'; record.value.retryable = false;
+    db().prepare('UPDATE qualifications SET data=? WHERE id=?').run(encrypt(record.value, `qualification:${initial.id}`), initial.id);
+    expect(listQualificationDtos(left.id)[0].canRetry).toBe(true);
+    if (failure === 'ens-revoked') external.fresh.mockRejectedValue(new HttpError(403, 'ENS_AUTHORITY_DENIED', 'Fixture current delegation is revoked.'));
+    else external.identity.mockImplementation(async (id: string) => ({ ...publicIdentity(id), association: { state: 'invalid', reason: 'association_record_empty' } }));
+    const code = failure === 'ens-revoked' ? 'ENS_AUTHORITY_DENIED' : 'PUBLIC_IDENTITY_DENIED';
+    await expect(retryQualification(left.id, initial.id, { version: initial.version }, () => {})).rejects.toMatchObject({ status: 403, code });
+    const failed = listQualificationDtos(left.id)[0]; expect(failed).toMatchObject({ failureCode: code, canRetry: false, attemptsUsed: 1 });
+    expect(qualificationRecord(initial.id)!.value.attempts).toEqual(record.value.attempts); expect(transport).toHaveBeenCalledTimes(1);
+    expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
+  });
+
+  it.each(['request-cap', 'cost-cap', 'missing-ledger'] as const)('does not reset a legacy generic failure budget at %s', async boundary => {
+    vi.stubEnv('AI_MAX_COST_USD', '0.05');
+    const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
+    const initial = listQualificationDtos(left.id)[0], record = qualificationRecord(initial.id)!;
+    record.value.failureCode = 'PROVIDER_UNAVAILABLE'; record.value.retryable = false;
+    if (boundary === 'request-cap') record.value.attempts = Array.from({ length: 6 }, () => ({ ...record.value.attempts![0], requestId: randomUUID() }));
+    if (boundary === 'cost-cap') record.value.attempts![0].reservedCostUsd = 0.05;
+    if (boundary === 'missing-ledger') delete record.value.attempts;
+    db().prepare('UPDATE qualifications SET data=? WHERE id=?').run(encrypt(record.value, `qualification:${initial.id}`), initial.id);
+    const before = qualificationRecord(initial.id)!, freshReads = external.fresh.mock.calls.length;
+    expect(listQualificationDtos(left.id)[0].canRetry).toBe(false);
+    await expect(retryQualification(left.id, initial.id, { version: initial.version }, () => {})).rejects.toMatchObject({ code: 'QUALIFICATION_CHANGED' });
+    expect(qualificationRecord(initial.id)!.value.attempts).toEqual(before.value.attempts); expect(external.fresh).toHaveBeenCalledTimes(freshReads); expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['PUBLIC_IDENTITY_DENIED', 'ENS_AUTHORITY_DENIED', 'QUALIFICATION_CHANGED'])('does not reinterpret terminal %s as a recoverable legacy transport failure', async failureCode => {
+    const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
+    const initial = listQualificationDtos(left.id)[0], record = qualificationRecord(initial.id)!;
+    record.value.failureCode = failureCode; record.value.retryable = false;
+    db().prepare('UPDATE qualifications SET data=? WHERE id=?').run(encrypt(record.value, `qualification:${initial.id}`), initial.id);
+    expect(listQualificationDtos(left.id)[0].canRetry).toBe(false);
+    await expect(retryQualification(right.id, initial.id, { version: initial.version }, () => {})).rejects.toMatchObject({ code: 'QUALIFICATION_CHANGED' });
+    expect(qualificationRecord(initial.id)!.value).toEqual(record.value); expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a fixed qualification output reason with zero accepted turns and permits a bounded explicit retry', async () => {
+    const transport = modelFixture([], 0, undefined, false, true);
+    await expect(start()).rejects.toMatchObject({ code: 'output' });
+    const failed = listQualificationDtos(left.id)[0];
+    expect(failed).toMatchObject({ state: 'blocked', failureCode: 'AGENT_output_criteria', canRetry: true, attemptsUsed: 1 });
+    expect(failed.messages).toEqual([]);
+    const persisted = qualificationRecord(failed.id)!;
+    expect(persisted.value.failureCode).toBe('AGENT_output_criteria'); expect(persisted.value.messages).toEqual([]);
+    expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]); expect(transport).toHaveBeenCalledTimes(1);
+    await retryQualification(right.id, failed.id, { version: failed.version }, () => {});
+    expect(listQualificationDtos(left.id)[0]).toMatchObject({ state: 'proposed', attemptsUsed: 3, canRetry: false });
+    expect(transport).toHaveBeenCalledTimes(3); expect(db().prepare('SELECT id FROM proposals').all()).toHaveLength(1);
+  });
+
+  it.each(['unknown-output', 'spoofed-error'] as const)('does not persist untrusted %s messages or spoofed diagnostic fields', async mode => {
+    const secret = 'UNTRUSTED_PRIVATE_PROVIDER_BODY_qualification_fixture';
+    const failure = mode === 'unknown-output'
+      ? Object.assign(new AgentError('output', `Qualification must assess each supplied category criterion exactly once. ${secret}`), { detailCode: 'criteria' })
+      : Object.assign(new Error(secret), { name: 'QualificationOutputError', code: 'output', detailCode: 'criteria' });
+    const transport = modelFixture([], 0, async () => { throw failure; });
+    await expect(start()).rejects.toMatchObject({ code: mode === 'unknown-output' ? 'output' : 'provider' });
+    const dto = listQualificationDtos(left.id)[0], persisted = qualificationRecord(dto.id)!;
+    const expected = mode === 'unknown-output' ? 'AGENT_output' : 'AGENT_provider';
+    expect(dto).toMatchObject({ state: 'blocked', failureCode: expected, canRetry: true, attemptsUsed: 1 });
+    expect(dto.messages).toEqual([]); expect(persisted.value.failureCode).toBe(expected);
+    expect(JSON.stringify({ dto, persisted: persisted.value })).not.toContain(secret);
+    expect(transport).toHaveBeenCalledTimes(1); expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
+  });
+
   it('reports optional legacy absence honestly and never treats it as registration or human verification', async () => {
     await start();
     const dto = listQualificationDtos(left.id)[0];

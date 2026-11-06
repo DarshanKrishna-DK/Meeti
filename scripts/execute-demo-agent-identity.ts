@@ -24,6 +24,26 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 function requireValue(condition: unknown, reason: string): asserts condition { if (!condition) throw new Error(reason); }
 const reviewPath = 'artifacts/demo-agent-identity-review.json', approvalPath = '.local-data/demo-agent-identity-approval.json', journalPath = '.local-data/demo-agent-identity-journal.enc';
 
+export function selectIdentityReconciliation(mode: string, operationId: string | undefined, operations: IdentityOperation[], entries: IdentityJournalEntry[]): IdentityOperation[] {
+  if (operationId === undefined) return operations;
+  requireValue(mode === 'reconcile', 'identity_operation_target_only_allowed_for_reconcile');
+  const operation = operations.find(value => value.id === operationId), entry = entries.find(value => value.id === operationId);
+  requireValue(operation && entry?.raw && entry.hash && entry.quote && /^0x[0-9a-f]{64}$/i.test(entry.hash) && keccak256(entry.raw) === entry.hash, 'identity_reconcile_target_requires_existing_exact_signed_hash');
+  requireValue(operation.dependsOn.every(id => entries.some(value => value.id === id && value.state === 'confirmed')), 'identity_reconcile_target_dependencies_unconfirmed');
+  return [operation];
+}
+export function safeIdentityErrorCodes(error: unknown): { httpStatuses: number[]; rpcCodes: number[] } {
+  const http = new Set<number>(), rpc = new Set<number>(), seen = new Set<object>(), queue: unknown[] = [error];
+  for (let visited = 0; queue.length && visited < 24; visited++) {
+    const item = queue.shift(); if (!item || typeof item !== 'object' || seen.has(item)) continue; seen.add(item);
+    const value = item as Record<string, unknown>;
+    for (const key of ['status', 'statusCode']) if (typeof value[key] === 'number' && Number.isInteger(value[key]) && value[key] >= 100 && value[key] <= 599) http.add(value[key]);
+    if (typeof value.code === 'number' && Number.isInteger(value.code) && value.code >= -32768 && value.code <= 32767) rpc.add(value.code);
+    for (const key of ['cause', 'error', 'response']) if (value[key] && typeof value[key] === 'object') queue.push(value[key]);
+  }
+  return { httpStatuses: [...http].sort((a, b) => a - b), rpcCodes: [...rpc].sort((a, b) => a - b) };
+}
+
 export function assertIdentityAdmission(input: { reviewExpiresAt: string; quoteExpiresAt?: string }, now = Date.now()) {
   requireValue(Number.isFinite(Date.parse(input.reviewExpiresAt)) && Date.parse(input.reviewExpiresAt) > now, 'identity_review_expired_no_new_signature_or_broadcast');
   if (input.quoteExpiresAt !== undefined) requireValue(Number.isFinite(Date.parse(input.quoteExpiresAt)) && Date.parse(input.quoteExpiresAt) > now, 'identity_api_quote_expired_no_new_signature_or_broadcast');
@@ -77,6 +97,8 @@ async function main() {
   const context = `meeti-demo-agent-identity-journal-v1:${reviewSha256}`;
   const journal: Journal = existsSync(journalPath) ? decrypt<Journal>(readFileSync(journalPath, 'utf8'), context) : { version: 1, chainId: 11155111, reviewSha256, entries: [] };
   requireValue(journal.version === 1 && journal.chainId === 11155111 && journal.reviewSha256 === reviewSha256 && journal.entries.every((entry, i) => entry.id === ids[i]), 'identity_journal_is_not_approved_prefix');
+  requireValue(process.argv.filter(value => value.startsWith('--operation-id=')).length <= 1, 'identity_duplicate_operation_targets_rejected');
+  const selectedOperations = selectIdentityReconciliation(mode!, arg('operation-id'), review.operations, journal.entries);
   if (mode === 'inspect') { console.log(JSON.stringify({ reviewSha256, entries: journal.entries.map(({ id, state, hash, identity, receipt }) => ({ id, state, hash, identity, receipt })), signatures: 0, broadcasts: 0 })); return; }
   requireValue(process.argv.includes('--execute-reviewed'), 'explicit_identity_execution_flag_required');
   const approval = JSON.parse(readFileSync(approvalPath, 'utf8')) as { authorized: boolean; reviewSha256: string; chainId: number; approvedAt: string; totalCaps: Record<string, string> };
@@ -91,6 +113,7 @@ async function main() {
   writeFileSync(lock, JSON.stringify({ pid: process.pid, reviewSha256 }));
   const rpcUrl = process.env.ENS_SEPOLIA_AUTH_RPC_URL || process.env.ENS_SEPOLIA_RPC_URL;
   let activeId = 'startup';
+  let stage: 'startup' | 'deployment_check' | 'signed_scope' | 'receipt_read' | 'receipt_depth' | 'canonical_receipt' | 'application_confirm' | 'record_materialization' | 'current_uri_read' | 'association_verify' | 'application_readback' | 'context_readback' | 'operation_execute' = 'startup';
   try {
     requireValue(rpcUrl, 'identity_rpc_not_configured');
     const client = createPublicClient({ chain: sepolia, transport: createEnsReadTransport(rpcUrl) });
@@ -130,10 +153,14 @@ async function main() {
       requireValue(pending.some(row => row.id === quote.operationId && row.state === 'prepared' && row.data.expiresAt === quote.expiresAt && row.data.maxFeeWei === quote.maxFeeWei && JSON.stringify(row.data.transaction) === JSON.stringify(quote.transaction)), 'identity_api_operation_changed_or_cancelled');
     }
     async function reconcile(entry: IdentityJournalEntry, operation: IdentityOperation, owner: DemoIdentityOwnerReview) {
+      stage = 'signed_scope';
       requireValue(entry.hash && entry.quote && entry.raw, 'identity_reconcile_signed_hash_required'); await assertIdentityRaw(entry, operation, owner);
+      stage = 'receipt_read';
       let receipt = await client.getTransactionReceipt({ hash: entry.hash }).catch(() => undefined);
       if (!receipt) { const known = await client.getTransaction({ hash: entry.hash }).catch(() => undefined); requireValue(known, 'identity_hash_unknown_no_rebroadcast_or_nonce_replacement'); receipt = await client.waitForTransactionReceipt({ hash: entry.hash, confirmations: 2, timeout: 90_000, pollingInterval: 3000 }); }
+      stage = 'receipt_depth';
       receipt = await ensureIdentityReceiptDepth({ receipt, headNumber: (await freshChain()).number, wait: () => client.waitForTransactionReceipt({ hash: entry.hash!, confirmations: 2, timeout: 90_000, pollingInterval: 3000 }) });
+      stage = 'canonical_receipt';
       const [head, actual, block] = await Promise.all([freshChain(), client.getTransaction({ hash: entry.hash }), client.getBlock({ blockNumber: receipt.blockNumber })]);
       requireValue(receipt.status === 'success' && head.number >= receipt.blockNumber + 1n && block.hash === receipt.blockHash && same(actual.from, owner.owner) && actual.to && same(actual.to, operation.to) && actual.input === entry.quote.transaction.data && actual.value === 0n, 'identity_canonical_receipt_scope_mismatch');
       const fee = receipt.gasUsed * receipt.effectiveGasPrice; requireValue(fee <= BigInt(operation.maxGasCostWei), 'identity_confirmed_fee_cap_exceeded');
@@ -141,17 +168,20 @@ async function main() {
       if (entry.receipt) requireValue(entry.receipt.blockHash === freshReceipt.blockHash && entry.receipt.blockNumber === freshReceipt.blockNumber, 'identity_prior_receipt_reorganized');
       if (!entry.receipt) { entry.receipt = freshReceipt; entry.state = 'mined'; save(); }
       if (!entry.apiSubmitted && Date.parse(entry.quote.expiresAt) > Date.now()) { await api(saved, entry.label, 'identity/submitted', { operationId: entry.quote.operationId, hash: entry.hash }); entry.apiSubmitted = true; save(); }
+      stage = 'application_confirm';
       const result = await api<{ confirmed: boolean; identity?: AgentRegistryIdentity }>(saved, entry.label, 'identity/confirm', { operationId: entry.quote.operationId, hash: entry.hash }); requireValue(result.confirmed, 'identity_application_confirmation_not_successful');
       if (operation.operation === 'register-identity') {
         const registered = await registry.confirmTransaction({ hash: entry.hash, prepared: owner.registrationPrepared }); requireValue(registered.identity && JSON.stringify(result.identity) === JSON.stringify(registered.identity), 'identity_application_tuple_does_not_match_canonical_event'); entry.identity = registered.identity;
       } else {
         const registration = journal.entries.find(item => item.id === `${owner.label}-register-identity`)!;
+        stage = 'record_materialization';
         const materialized = await prepareConditionalDemoAgentIdentityStep({ review: owner, registrationHash: registration.hash!, operation: operation.operation, ens, identity: registry });
         requireValue(materialized.transaction.data === entry.quote.transaction.data, 'identity_confirmed_data_not_current_reviewed_materialization');
-        if (operation.operation === 'set-identity-uri') requireValue(await client.readContract({ address: ERC8004_SEPOLIA.registry, abi: identityRegistryAbi, functionName: 'tokenURI', args: [BigInt(materialized.identity.agentId)] }) === registrationDataUri(materialized.document), 'identity_current_uri_not_reviewed_document');
-        if (operation.operation === 'attest-association') requireValue((await registry.verifyAssociation({ identity: materialized.identity, ensName: owner.ensName, owner: owner.owner })).verified, 'identity_final_registry_to_ens_association_unverified');
+        if (operation.operation === 'set-identity-uri') { stage = 'current_uri_read'; requireValue(await client.readContract({ address: ERC8004_SEPOLIA.registry, abi: identityRegistryAbi, functionName: 'tokenURI', args: [BigInt(materialized.identity.agentId)] }) === registrationDataUri(materialized.document), 'identity_current_uri_not_reviewed_document'); }
+        if (operation.operation === 'attest-association') { stage = 'association_verify'; requireValue((await registry.verifyAssociation({ identity: materialized.identity, ensName: owner.ensName, owner: owner.owner })).verified, 'identity_final_registry_to_ens_association_unverified'); }
         entry.identity = materialized.identity;
       }
+      stage = 'application_readback';
       const current = await api<{ identity?: AgentRegistryIdentity; context?: unknown; association?: { verified: boolean } }>(saved, entry.label, 'identity');
       requireValue(entry.identity && JSON.stringify(current.identity) === JSON.stringify(entry.identity), 'identity_http_tuple_not_persisted');
       if (operation.operation === 'publish-context') { const registration = journal.entries.find(item => item.id === `${owner.label}-register-identity`)!; const materialized = await prepareConditionalDemoAgentIdentityStep({ review: owner, registrationHash: registration.hash!, operation: 'publish-context', ens, identity: registry }); const records = await ens.readPublicAgentRecords({ ensName: owner.ensName, owner: owner.owner, keys: [AGENT_CONTEXT_KEY] }); requireValue(records.records[AGENT_CONTEXT_KEY] === JSON.stringify(materialized.context) && JSON.stringify(current.context) === JSON.stringify(materialized.context), 'identity_context_chain_or_http_readback_mismatch'); }
@@ -160,8 +190,10 @@ async function main() {
       console.log(JSON.stringify({ id: entry.id, state: entry.state, hash: entry.hash, identity: entry.identity, receipt: entry.receipt }));
     }
     try {
+      stage = 'deployment_check';
       await freshChain(); requireValue((await registry.inspectDeployment()).verified, 'identity_pinned_deployment_not_verified');
-      for (const operation of review.operations) {
+      for (const operation of selectedOperations) {
+        stage = 'operation_execute';
         activeId = operation.id; const owner = review.owners.find(value => value.label === operation.label); requireValue(owner, 'unknown_identity_owner');
         let entry = journal.entries.find(value => value.id === operation.id);
         if (entry?.raw) {
@@ -194,7 +226,7 @@ async function main() {
         await reconcile(entry, operation, owner);
       }
     } finally { await Promise.all([ens.disconnect(), registry.disconnect()]); for (const rpc of [client, sender]) { const transport = rpc?.transport as { getRpcClient?: () => Promise<{ close(): void }> } | undefined; try { if (transport?.getRpcClient) (await transport.getRpcClient()).close(); } catch { /* Endpoint details remain private. */ } } }
-  } catch (error) { console.error(JSON.stringify({ operation: activeId, outcome: 'stopped_preserve_journal_no_automatic_replacement' })); throw error; }
+  } catch (error) { console.error(JSON.stringify({ operation: activeId, stage, outcome: 'stopped_preserve_journal_no_automatic_replacement', ...safeIdentityErrorCodes(error) })); throw error; }
   finally { closeSync(lock); unlinkSync(lockPath); }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main().catch(error => { console.error(error instanceof Error && /^[a-z][a-z0-9_]+$/.test(error.message) ? error.message : 'agent_identity_execution_stopped_no_secret_details_logged'); process.exitCode = 1; });

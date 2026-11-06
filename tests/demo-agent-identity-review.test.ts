@@ -5,7 +5,7 @@ import { ERC8004_SEPOLIA, identityRegistryAbi } from '../packages/ens/agent-iden
 import { agentRegistrationKey, publicAgentContextSchema, readRegistrationDataUri, registrationDataUri } from '../packages/ens/agent-records';
 import { dnsEncode } from '../packages/ens';
 import { resolverAbi } from '../packages/ens/abi';
-import { admitIdentityBroadcast, assertIdentityAdmission, assertIdentityApiQuote, assertIdentityRaw, ensureIdentityReceiptDepth, type IdentityJournalEntry, type IdentityQuote } from '../scripts/execute-demo-agent-identity';
+import { admitIdentityBroadcast, assertIdentityAdmission, assertIdentityApiQuote, assertIdentityRaw, ensureIdentityReceiptDepth, safeIdentityErrorCodes, selectIdentityReconciliation, type IdentityJournalEntry, type IdentityQuote } from '../scripts/execute-demo-agent-identity';
 
 // Receipt and provider methods are fixtures. These tests verify binding and exact public payloads, not live chain success.
 const owner = '0x1111111111111111111111111111111111111111' as Address;
@@ -101,6 +101,29 @@ function quoteFixture() {
   return { quote, owner: f.review, operation, expected: transaction, reviewExpiresAt, now: clockNow };
 }
 describe('identity executor admission and immutable signed guards without network or wallet signing', () => {
+  it('targets only an existing signed reconciliation entry and preserves all other journal states', () => {
+    const q = quoteFixture(), raw = '0x1234' as Hex;
+    const prior: IdentityJournalEntry = { id: 'demo-seeker-register-identity', label: 'demo-seeker', state: 'confirmed' };
+    const target: IdentityJournalEntry = { id: q.operation.id, label: 'demo-seeker', state: 'submitted', raw, hash: keccak256(raw), quote: q.quote };
+    const entries = [prior, target], before = JSON.stringify(entries), operations = [q.operation];
+    expect(selectIdentityReconciliation('reconcile', target.id, operations, entries)).toEqual([q.operation]);
+    expect(JSON.stringify(entries)).toBe(before);
+    expect(selectIdentityReconciliation('execute', undefined, operations, entries)).toBe(operations);
+    expect(() => selectIdentityReconciliation('execute', target.id, operations, entries)).toThrow('only_allowed_for_reconcile');
+    expect(() => selectIdentityReconciliation('inspect', target.id, operations, entries)).toThrow('only_allowed_for_reconcile');
+    expect(() => selectIdentityReconciliation('reconcile', 'unknown', operations, entries)).toThrow('existing_exact_signed_hash');
+    expect(() => selectIdentityReconciliation('reconcile', target.id, operations, [prior, { ...target, raw: undefined }])).toThrow('existing_exact_signed_hash');
+    expect(() => selectIdentityReconciliation('reconcile', target.id, operations, [prior, { ...target, hash: registrationHash }])).toThrow('existing_exact_signed_hash');
+    expect(() => selectIdentityReconciliation('reconcile', target.id, operations, [{ ...prior, state: 'submitted' }, target])).toThrow('dependencies_unconfirmed');
+  });
+  it('extracts bounded numeric nested HTTP and RPC codes without exposing messages, URLs, data or cycles', () => {
+    const error = { status: 429, message: 'secret https://private.example/key', data: { status: 500, code: -1 }, cause: { code: -32005, response: { statusCode: 503 }, error: { code: 3 } } };
+    (error as unknown as { error: unknown }).error = error;
+    const result = safeIdentityErrorCodes(error);
+    expect(result).toEqual({ httpStatuses: [429, 503], rpcCodes: [-32005, 3] });
+    expect(JSON.stringify(result)).not.toMatch(/secret|private|key|data|500/);
+    expect(safeIdentityErrorCodes({ status: '429', code: 'secret', cause: { code: 123456789, status: 999 } })).toEqual({ httpStatuses: [], rpcCodes: [] });
+  });
   it('awaits the second confirmation even when the first receipt is already visible, preserving the same transaction hash', async () => {
     const receipt = { transactionHash: registrationHash, blockNumber: 100n }, wait = vi.fn(async () => receipt);
     expect(await ensureIdentityReceiptDepth({ receipt, headNumber: 100n, wait })).toEqual(receipt); expect(wait).toHaveBeenCalledOnce();

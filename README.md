@@ -424,19 +424,20 @@ The current flow additionally includes owner-reviewed assisted intake, extended 
 
 Both owners review the same introduction version before exchanging permitted availability. Time negotiation checks real interval overlap and matching duration, and invalidates stale slot confirmations. While World is paused, the interface can show a slot awaiting required verification. It cannot claim final meeting agreement, create a private room, send an invitation or invent a video link.
 
-Latest live bounded qualification check: genuine Arkiv reads, six current ENS checks and two actual `openai/gpt-oss-20b` messages completed. The service requested owner clarification for missing material information. This is not a qualified introduction or independent two-device acceptance. Failed or interrupted conversations have an explicit bounded retry that preserves completed messages and reserves model attempts durably. Public ENSIP-26 endpoints require an authorized HTTPS deployment; ERC-8004/ENSIP-25 transaction preparation and verification exist, but no new registration or attestation has been signed for the new onboarding flow.
+An earlier live bounded qualification check completed genuine Arkiv reads, six current ENS checks and two actual `openai/gpt-oss-20b` messages, then requested owner clarification. The new workshop conversation remains under verification after a rejected model output and interrupted provider reads. Neither result establishes a qualified introduction or independent two-device acceptance. Failed or interrupted conversations have an explicit bounded retry that preserves completed messages and reserves model attempts durably. The two new test agents now have confirmed ERC-8004 registrations, reviewed ENSIP-26 public context and verified ENSIP-25 associations. Public endpoints still require an authorized HTTPS deployment; no unsupported A2A or MCP service is advertised.
 
 | Area | Evidence and remaining boundary |
 |---|---|
 | Authentication and private profiles | Real EIP-4361 wallet signatures, browser-bound nonce/replay checks, persisted tour and guided profile setup; encrypted at rest |
 | ENSv2 | Two actual Sepolia namespaces, reciprocal narrow writes, forbidden-operation reverts, revocation, genuine API denial and restoration verified |
-| Arkiv | Three approved fictional Rabdi publications, successful receipts, signed owner/creator association and actual SDK readbacks |
+| Agent registration | Sepolia registry `0x8004A818BFB912233c491871b3d84c89A494BD9e`, agent IDs `11302` and `11304`; eight confirmed operations, exact ENS associations and separate owner wallets |
+| Arkiv | Latest demo: four approved fictional intents plus one same-ID revision, confirmed receipts, signed owner/creator association and actual SDK readbacks |
 | Semantic discovery | Real Nomic calls; positive paraphrase without exact tag overlap; incompatible seeker excluded; cold-cache rebuild verified |
 | Finite held-out evaluation | Sixteen triplets: top rank 14/16, precision 16/19, recall 16/16; three false positives retained; English coverage only |
 | AI agents | Actual structured compatibility and two isolated model-generated turns with exact source validation |
 | Consent and disclosure | Actual private-contact denial and automated fictional-account approvals; independent humans remain a separate gate |
 | World and rooms | Preserved implementation, explicitly disabled after login HTTP 403; genuine proof and protected release remain pending |
-| Public lifecycle | Expiry and freshness checks implemented and fixture-tested; natural live expiry and additional approved edit/closure tests pending |
+| Public lifecycle | Same-ID workshop revision confirmed with unchanged expiry; expiry/freshness checks fixture-tested; natural live expiry and additional closure tests pending |
 | Deployment | Local application; Vercel needs durable backend architecture or reviewed persistence/provider migration |
 
 <details>
@@ -489,7 +490,7 @@ npm run demo:doctor
 
 Run npm run demo:doctor -- --target=vercel to see the current deployment blockers. This read-only check does not perform model inference, wallet signing, chain writes or World requests.
 
-Latest integration checkpoint on 6 November 2026: **716 tests across 45 files passed**, together with TypeScript, lint and the production build. New regression coverage includes intent closure versus concurrent edits, fresh ENS identity bindings after qualification, and bounded transaction-executor recovery. These fixture checks are separate from the four confirmed fictional Arkiv publications and actual two-sided DevRel embedding discovery documented in [Arkiv usage](arkiv/how-you-use-arkiv.md). World remains paused. The workshop test exposed a model preference incorrectly marked mandatory; that pair is currently rejected and is not claimed as a successful match. Registry registration and ENS association for the new test agents remain unsigned pending separate approval.
+The latest full test checkpoint on 6 November 2026 passed **825 tests across 48 files**, including stale intent edits, session revocation during consent, bounded read retries, safe qualification diagnostics and transaction recovery. These fixture checks are separate from the confirmed fictional publications and actual DevRel embedding discovery documented in [Arkiv usage](arkiv/how-you-use-arkiv.md). Workshop revision 2 now passes bidirectional semantic discovery, with cosine 0.8501 and unconfirmed soft preferences. Its dialogue remains under verification after a rejected model output. Both new test agents have confirmed registry registrations and ENS associations. World remains paused.
 
 Browser tests run the optimized production build with an isolated database and port 3198. Run npm run build before npm run test:e2e. Stop any server using the same build before rebuilding. Browser tests do not use the development hot-reload server. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to an installed Chromium executable if needed. Fixture checks do not establish live sponsor success. Real-provider drivers remain separate and do not authorize extra public writes.
 

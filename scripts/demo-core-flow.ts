@@ -14,11 +14,11 @@ import { availabilitySchema, normalizeAvailability, overlappingSlots, type Meeti
 // chain transactions, publishes records, inserts database rows, or bypasses World.
 type Label = 'demo-seeker' | 'demo-recruiter';
 type Case = 'job' | 'collaboration';
-type Mode = 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
+type Mode = 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'retry' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
 type Vault = { version: 1; wallets: { label: string; privateKey: `0x${string}` }[] };
 type Prepared = { inputHash: string; interpretation: { output: { goal: Intent['goal']; summary: string; tags: string[]; semantics: IntentSemantics }; inference: InferenceReceipt }; intentId?: string; publicPreview?: PublicIntent };
 type Discovery = { candidates: Candidate[]; source: 'arkiv'; mode: 'semantic'; embeddingExecution: string; coverage: unknown; observedBlocks: string[] };
-type Qualification = { id: string; version: number; state: string; otherEns: string; stopReason: string; failureCode: string | null; proposalId: string | null; messages: { id: string; createdAt: string }[]; questions: { id: string; question: string; answered: boolean }[] };
+type Qualification = { id: string; version: number; state: string; otherEns: string; stopReason: string; failureCode: string | null; canRetry: boolean; proposalId: string | null; messages: { id: string; createdAt: string }[]; questions: { id: string; question: string; answered: boolean }[] };
 type Progress = { version: 1; origin: string; sessions: Partial<Record<Label, string>>; accounts: Partial<Record<Label, string>>;
   prepared: Partial<Record<`${Case}:${Label}`, Prepared>>; discovery: Partial<Record<`${Case}:${Label}`, Discovery>>;
   qualifications: Partial<Record<Case, { qualificationId: string; id: string | null }>>; pending?: { step: string; startedAt: string };
@@ -34,6 +34,7 @@ const meetingFileSchema = z.object({ fictional: z.literal(true), proposalId: z.s
 const mode = process.argv[2] as Mode;
 const option = (name: string, fallback: string) => { const index = process.argv.indexOf(name); return index < 0 ? fallback : process.argv[index + 1]; };
 const selectedCase = option('--case', 'job') as Case;
+const requestTimeoutMs = Number(process.env.DEMO_HTTP_TIMEOUT_MS || 240000);
 const origin = new URL(process.env.APP_ORIGIN || 'http://127.0.0.1:3173').origin;
 const statePath = '.local-data/demo-core-flow.enc', stateContext = 'meeti-demo-core-flow-v1';
 const labels: Label[] = ['demo-seeker', 'demo-recruiter'];
@@ -57,7 +58,7 @@ function save() {
 }
 function summary(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
 async function call<T>(label: Label, path: string, body?: unknown): Promise<{ data: T; response: Response }> {
-  const response = await fetch(`${origin}/api/${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(240000),
+  const response = await fetch(`${origin}/api/${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(requestTimeoutMs),
     headers: { origin, 'content-type': 'application/json', ...(progress.sessions[label] ? { cookie: progress.sessions[label]! } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const result = await response.json() as { data: T; error?: { code: string; message?: string } };
@@ -234,6 +235,13 @@ async function resume() {
   await metered(`resume:${id}:${current.version}`, () => call<{ id: string | null; qualificationId: string }>('demo-seeker', `qualifications/${id}/resume`, { version: current.version }),
     result => { progress.qualifications[selectedCase] = result.data; });
 }
+async function retry() {
+  const id = z.string().uuid().parse(option('--qualification-id', ''));
+  const current = await conversation('demo-seeker', id); await conversation('demo-recruiter', id);
+  if (current.state !== 'blocked' || !current.canRetry) throw new DemoError('QUALIFICATION_IS_NOT_READY_FOR_BOUNDED_RETRY');
+  await metered(`retry:${id}:${current.version}`, () => call<{ id: string | null; qualificationId: string }>('demo-seeker', `qualifications/${id}/retry`, { version: current.version }),
+    result => { progress.qualifications[selectedCase] = result.data; });
+}
 async function sameProposal(id: string, reviewedDigest: string) {
   const states = await Promise.all(labels.map(async label => ({ label, state: (await call<AppState>(label, 'state')).data })));
   const proposals = states.map(({ state }) => state.proposals.find(proposal => proposal.id === id));
@@ -309,14 +317,15 @@ async function inspect() {
     const current = (await call<AppState>(label, 'state')).data, conversations = (await call<Qualification[]>(label, 'qualifications')).data;
     views.push({ label, userId: current.user.id, wallet: current.user.wallet, agent: current.agent ? { ensName: current.agent.ensName, authority: current.agent.authority ? { allowed: current.agent.authority.allowed, reason: current.agent.authority.reason, checkedAt: current.agent.authority.checkedAt } : null } : null,
       intents: current.intents.map(({ id, status, arkivKey, transactionHash, semantics }) => ({ id, status, arkivKey, transactionHash, direction: semantics?.direction })),
-      conversations: conversations.map(({ id, version, state, otherEns, stopReason, failureCode, proposalId, messages, questions }) => ({ id, version, state, otherEns, stopReason, failureCode, proposalId,
+      conversations: conversations.map(({ id, version, state, otherEns, stopReason, failureCode, canRetry, proposalId, messages, questions }) => ({ id, version, state, otherEns, stopReason, failureCode, canRetry, proposalId,
         messageCount: messages.length, messageTimestamps: messages.map(message => message.createdAt), questions, unansweredQuestionCount: questions.filter(question => !question.answered).length })),
       proposals: current.proposals.map(({ id, digest, status, world, myConsent }) => ({ id, digest, status, world, myConsent })), roomCount: current.rooms.length });
   }
   summary({ checkedAt: new Date().toISOString(), fictional: true, humanVerified: false, scope: 'Actual local HTTP accounts, configured live integrations only when successful. No human/device acceptance is implied.', pending: progress.pending || null, accounts: views });
 }
 try {
-  if (!['setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000 || requestTimeoutMs > 600000) throw new DemoError('DEMO_HTTP_TIMEOUT_MUST_BE_BOUNDED_AT_TEN_MINUTES');
+  if (!['setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'retry', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
   if (!['127.0.0.1', 'localhost'].includes(new URL(origin).hostname) || new URL(origin).protocol !== 'http:') throw new DemoError('DEMO_DRIVER_REQUIRES_LOCAL_HTTP_ORIGIN');
   mkdirSync('.local-data', { recursive: true });
   try { const lock = openSync('.local-data/demo-core-flow.lock', 'wx', 0o600); lockOwned = true; closeSync(lock); }
@@ -341,6 +350,7 @@ try {
   if (mode === 'qualify') await qualify();
   if (mode === 'answer') await answer();
   if (mode === 'resume') await resume();
+  if (mode === 'retry') await retry();
   if (mode === 'consent') await consent();
   if (mode === 'meeting') await meeting();
   if (mode === 'meeting-plan') await meetingPlan();

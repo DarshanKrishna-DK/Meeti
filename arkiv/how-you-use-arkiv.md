@@ -36,6 +36,8 @@ Official tooling was read through the available Arkiv General MCP and the [AI To
 
 On 6 November 2026, two separate generated test owners published these four approved intents on Rabdi, chain 7794095. Each passed canonical receipt verification, application confirmation and SDK payload read-back. The official Arkiv MCP `verify_entity` separately observed all four owners and creation/expiry block metadata at block 303325. That MCP observation does not establish application correctness or prize eligibility.
 
+The workshop recruiter subsequently published approved revision 2 for the same logical intent `635da455-bab3-41b6-97cf-d43fa9a95ad0`: [transaction](https://rabdi.explorer.arkiv.network/tx/0xe2a7208e626d304e353ceabe9a2db973b0e515c15226593e182f3e131de9fb99), entity `0x4485da1e5050e5d547e72c516c04e2ef9daebd9da386ca2c8e36f8974baebf8b`, block 306425. The exact correction changes an incorrectly extracted mandatory condition to preferred, preserving the public text and expiry. Historical revision 1 remains visible on-chain but is not the current application revision. Fresh queries selected revision 2 in both directions; actual Nomic embeddings produced cosine 0.8501236543818352 despite no exact tag overlap. Both results are possible matches with unresolved preferences, not consent. One local embedding request processed 33 tokens; the reverse query reused two cached vectors after fresh Arkiv and ENS checks. Coverage was bounded at twelve candidates and was not exhaustive.
+
 | Intent | Entity key | Transaction |
 | --- | --- | --- |
 | DevRel job seeker | `0x814a8b6a7cda9fce6da3f65d5764d461aa2b3d8bdf7d67befb20efbdce9647aa` | `0x638379d3c25c6394851276206bb3416eecc9cf2c21117543f05612e9eae2b961` |
