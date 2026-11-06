@@ -12,7 +12,9 @@ type Qualification = { id: string; version: number; state: string; otherEns: str
   messages: { id: string; content: string; createdAt: string }[] };
 type AccountReport = { label: Label; userId?: string; agentEns?: string; checks: string[]; intentStates?: Record<string, number>; conversationStates?: Record<string, number>;
   actualMessages?: number; actualProposals?: number; actualRooms?: number; actualPrivateFiles?: number; privateFieldsChecked?: number; tourVisible?: boolean;
-  originalReadback?: { bytes: number; sha256: string; ownerAllowed: true; publicDenied: true }; screenshots: string[] };
+  originalReadback?: { bytes: number; sha256: string; ownerAllowed: true; publicDenied: true };
+  pageDiagnostics?: { pathname: string; expectedIntents: number; allSavedIntentCards: number; intentionLibraryCards: number; schedulerCards: number; alertCount: number; applicationErrorVisible: boolean };
+  screenshots: string[] };
 class ReadbackError extends Error { constructor(readonly code: string) { super(code); } }
 const origin = new URL(process.env.APP_ORIGIN || 'http://127.0.0.1:3173').origin;
 const labels: Label[] = ['demo-seeker', 'demo-recruiter'];
@@ -36,6 +38,16 @@ async function visit(page: Page, path: string, state: AppState) {
 async function capture(page: Page, report: AccountReport, name: string) {
   const file = `${outputDirectory}/${report.label}-${name}.png`;
   await page.screenshot({ path: file, fullPage: false, animations: 'disabled', timeout: 10000 }); report.screenshots.push(file);
+}
+async function diagnosePage(page: Page, state: AppState, report: AccountReport) {
+  report.pageDiagnostics = {
+    pathname: new URL(page.url()).pathname, expectedIntents: state.intents.length,
+    allSavedIntentCards: await page.locator('.saved-intent').count(),
+    intentionLibraryCards: await page.locator('section.saved-intents').filter({ has: page.getByRole('heading', { name: 'Your intentions', exact: true, includeHidden: true }) }).locator('.saved-intent').count(),
+    schedulerCards: await page.locator('section[aria-labelledby="discovery-schedule-title"] .saved-intent').count(),
+    alertCount: await page.getByRole('alert', { includeHidden: true }).count(),
+    applicationErrorVisible: await page.getByRole('heading', { name: /^Application error:/ }).isVisible(),
+  };
 }
 async function originalReadback(context: BrowserContext, anonymous: APIRequestContext, label: Label, files: ContextDocument[], report: AccountReport) {
   const known = files.filter(file => file.name === `${label}-context.txt`);
@@ -90,8 +102,12 @@ async function profileReadback(page: Page, context: BrowserContext, state: AppSt
 }
 async function intentsReadback(page: Page, state: AppState, report: AccountReport) {
   await visit(page, 'intents', state);
-  const cards = page.locator('.saved-intent');
+  // Scheduler cards deliberately reuse this class. Count only the owner's intention library.
+  const library = page.locator('section.saved-intents').filter({ has: page.getByRole('heading', { name: 'Your intentions', exact: true, includeHidden: true }) });
+  await check('INTENT_LIBRARY_NOT_RENDERED', () => expect(library).toHaveCount(1));
+  const cards = library.locator('.saved-intent');
   await check('INTENT_COUNT_DIFFERS_FROM_HTTP', () => expect(cards).toHaveCount(state.intents.length));
+  await diagnosePage(page, state, report);
   for (let index = 0; index < state.intents.length; index++) {
     const intent = state.intents[index], card = cards.nth(index);
     await check('INTENT_SUMMARY_DIFFERS_FROM_HTTP', () => expect(card.getByRole('heading', { level: 3, includeHidden: true })).toHaveText(intent.summary));
@@ -175,11 +191,17 @@ try {
     for (let index = 0; index < labels.length; index++) {
       const report: AccountReport = { label: labels[index], userId: snapshots[index].user.id, agentEns: snapshots[index].agent?.ensName, checks: [], screenshots: [] }; reports.push(report);
       const page = await contexts[index].newPage(); page.setDefaultTimeout(10000);
-      await originalReadback(contexts[index], anonymous, labels[index], files[index], report);
-      await profileReadback(page, contexts[index], snapshots[index], snapshots[1 - index], files[index], files[1 - index], report);
-      await intentsReadback(page, snapshots[index], report);
-      await conversationsReadback(page, contexts[index], snapshots[index], report);
-      await approvalsReadback(page, snapshots[index], report);
+      try {
+        await originalReadback(contexts[index], anonymous, labels[index], files[index], report);
+        await profileReadback(page, contexts[index], snapshots[index], snapshots[1 - index], files[index], files[1 - index], report);
+        await intentsReadback(page, snapshots[index], report);
+        await conversationsReadback(page, contexts[index], snapshots[index], report);
+        await approvalsReadback(page, snapshots[index], report);
+      } catch (error) {
+        // Diagnostics use only bounded counts, fixed flags and a local pathname. Never serialize page text or browser exceptions.
+        try { await diagnosePage(page, snapshots[index], report); await capture(page, report, 'failure'); } catch { /* Preserve the original readback failure. */ }
+        throw error;
+      }
     }
   } finally { await anonymous.dispose(); for (const context of contexts) await context.close(); }
   if (blockedRequests.some(request => request.reason !== 'external-request-blocked')) throw new ReadbackError('UI_ATTEMPTED_MUTATION_OR_PROVIDER_READ_DURING_READONLY_INSPECTION');

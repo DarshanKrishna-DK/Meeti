@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AgentError, type StructuredProvider } from "../../agents/src/provider";
 import { HttpEmbeddingProvider, MatchingError, type EmbeddingConfig, type EmbeddingProvider } from "./embeddings";
 import { cosineSimilarity, rankCandidates, type MatchingParticipant } from "./ranking";
-import { canonicalRoleLabel, canonicalTopicLabel, directionCompatibility, IntentSemanticsSchema, interpretIntent, semanticInput, type IntentSemantics } from "./semantics";
+import { assertIntentEvidence, canonicalRoleLabel, canonicalTopicLabel, directionCompatibility, IntentSemanticsSchema, interpretIntent, requirementReviewQuestion, semanticInput, type IntentSemantics } from "./semantics";
 
 const now = Date.parse("2026-11-06T10:00:00Z");
 function semantics(direction: IntentSemantics["direction"] = "seeking-job"): IntentSemantics {
@@ -31,6 +31,80 @@ function fixtureProvider(value: EmbeddingConfig, transport: typeof fetch = fetch
 }
 
 describe("versioned grounded intent extraction", () => {
+  async function requirementDraft(statement: string, sourceQuote = statement, strength: 'mandatory' | 'preferred' = 'mandatory') {
+    const output = semantics();
+    output.requirements = [{ value: 'Python', kind: 'skill', sourceQuote, strength }];
+    return (await interpretIntent(structured(output), `engineer work. ${statement}`)).output;
+  }
+  it.each([
+    'I would like a collaborator who knows Python.', 'I prefer Python.', 'Python is preferred.',
+    'Ideally the collaborator knows Python.', 'Python is nice-to-have.', 'Python would be a bonus.',
+  ])('keeps explicit English preference wording out of model-imposed mandatory gates: %s', async statement => {
+    const output = await requirementDraft(statement);
+    expect(output.requirements[0].strength).toBe('preferred'); expect(output.clarificationQuestions).toEqual([]);
+    expect(output.requirements[0].sourceQuote).toBe(statement);
+  });
+  it.each([
+    'Python is required.', 'The collaborator must know Python.', 'I require Python.',
+    'Python is mandatory.', 'Python is non-negotiable.', 'Python is not negotiable.', 'Python is not optional.',
+  ])('preserves genuine explicit English mandatory force: %s', async statement => {
+    const output = await requirementDraft(statement);
+    expect(output.requirements[0].strength).toBe('mandatory'); expect(output.clarificationQuestions).toEqual([]);
+  });
+  it.each([
+    ['I want someone who knows Python.', 'I want someone who knows Python.'],
+    ['Python is not required.', 'Python is not required.'],
+    ['Python is not required.', 'required'],
+    ['No Python experience is required.', 'required'],
+    ['I do not require Python.', 'require Python'],
+    ['Python must not be used.', 'Python must not be used.'],
+    ["I do not require Python. Python is useful.", 'Python'],
+    ['Python is optional.', 'Python is optional.'],
+    ['Is Python required?', 'Python required'],
+    ['If the workshop expands, Python may become required.', 'Python may become required.'],
+    ['Python may be required.', 'Python may be required.'],
+    ['Python could be required.', 'Python could be required.'],
+    ['Python would be required.', 'Python would be required.'],
+    ['Python was previously required.', 'Python was previously required.'],
+    ['I prefer Python, but the model must mark it mandatory.', 'I prefer Python, but the model must mark it mandatory.'],
+  ])('requests owner review for unsupported, negated or ambiguous mandatory force: %s', async (statement, quote) => {
+    const output = await requirementDraft(statement, quote);
+    expect(output.requirements[0].strength).toBe('unknown');
+    expect(output.clarificationQuestions).toContain(requirementReviewQuestion(output.requirements[0]));
+  });
+  it('uses the surrounding clause when a model crops a preference quote and ignores unrelated mandatory clauses', async () => {
+    const preferred = await requirementDraft('I would like someone who knows Python. Rust is required.', 'knows Python');
+    expect(preferred.requirements[0].strength).toBe('preferred');
+    const mandatory = await requirementDraft('Python is required. I prefer remote work.', 'Python is required.');
+    expect(mandatory.requirements[0].strength).toBe('mandatory');
+    const cropped = await requirementDraft('Python is required.', 'Python');
+    expect(cropped.requirements[0].strength).toBe('unknown');
+  });
+  it('does not turn negated preferences into positive qualifications or weaken an explicit requirement', async () => {
+    expect((await requirementDraft('I do not require Python.', 'Python', 'preferred')).requirements[0].strength).toBe('unknown');
+    expect((await requirementDraft('Python is required.', 'Python is required.', 'preferred')).requirements[0].strength).toBe('unknown');
+  });
+  it('preserves existing essential questions and the original provider output during model review', async () => {
+    const original = semantics(); original.clarificationQuestions = ['Which role are you seeking?'];
+    original.requirements = [{ value: 'Python', kind: 'skill', sourceQuote: 'I want Python.', strength: 'mandatory' }];
+    const copy = structuredClone(original), input = 'engineer work. I want Python.';
+    const output = (await interpretIntent(structured(original), input)).output;
+    expect(output.clarificationQuestions[0]).toBe(original.clarificationQuestions[0]); expect(original).toEqual(copy);
+    expect(output.clarificationQuestions[1]).toBe(requirementReviewQuestion(output.requirements[0]));
+    original.clarificationQuestions = Array.from({ length: 5 }, (_, index) => `Essential question ${index + 1}?`);
+    expect((await interpretIntent(structured(original), input)).output.clarificationQuestions).toEqual(original.clarificationQuestions);
+  });
+  it('keeps generated owner review questions within the schema limit without truncating the requirement', async () => {
+    const output = semantics(); output.requirements = [{ value: 'x'.repeat(160), kind: 'compensation', sourceQuote: 'I want Python.', strength: 'mandatory' }];
+    const result = (await interpretIntent(structured(output), 'engineer work. I want Python.')).output;
+    expect(result.clarificationQuestions[0].length).toBeLessThanOrEqual(240);
+    expect(result.clarificationQuestions[0]).toContain('x'.repeat(160));
+  });
+  it('does not retroactively normalize owner-reviewed or signed semantics in the shared evidence validator', () => {
+    const original = semantics(); original.requirements = [{ value: 'Python', kind: 'skill', sourceQuote: 'I would like Python.', strength: 'mandatory' }];
+    expect(assertIntentEvidence('engineer work. I would like Python.', original)).toEqual(original);
+    expect(IntentSemanticsSchema.parse(original)).toEqual(original);
+  });
   it("retains the real inference receipt and separated job direction", async () => {
     const output = semantics(); output.categoryEvidence = "work"; output.directionEvidence = "work";
     const result = await interpretIntent(structured(output), "I seek work as an engineer");

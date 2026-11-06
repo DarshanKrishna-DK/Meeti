@@ -6,10 +6,13 @@ process.on('SIGINT', () => { stopped = true; });
 process.on('SIGTERM', () => { stopped = true; });
 console.info('Meeti discovery worker started. Only opted-in active intents are eligible. No publications or automatic introductions are signed.');
 while (!stopped) {
-  const started = Date.now();
-  try { console.info(JSON.stringify({ at: new Date().toISOString(), ...await discoveryTick() })); }
+  try {
+    const result = await discoveryTick();
+    if (result.processed || result.failed) console.info(JSON.stringify({ at: new Date().toISOString(), ...result }));
+  }
   catch { console.error('Discovery tick failed. No substitute matches were generated.'); }
-  const remaining = Math.max(1000, 60000 - (Date.now() - started));
-  for (let waited = 0; waited < remaining && !stopped; waited += 1000) await new Promise(resolve => setTimeout(resolve, Math.min(1000, remaining - waited)));
+  // Poll local due work promptly after publication. Persisted job deadlines still enforce
+  // the one-minute cadence, account budgets, backoff and exclusive leases before any RPC.
+  if (!stopped) await new Promise(resolve => setTimeout(resolve, 1000));
 }
 closeDatabase();

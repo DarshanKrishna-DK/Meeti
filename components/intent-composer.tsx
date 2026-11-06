@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { ArrowRight, Check, ExternalLink, Globe2, LockKeyhole, Sparkles, Wallet, Zap } from 'lucide-react';
 import type { Goal, Intent } from '@/packages/shared/src';
-import type { IntentSemantics } from '@/packages/matching/src/semantics';
+import { requirementReviewQuestion, type IntentSemantics } from '@/packages/matching/src/semantics';
 import { normalizeTopics } from '@/packages/shared/src/topics';
 import { Button, Checkline, Field, Tag, api, renewWalletPermission, submitTransaction, wallet, type Shared } from './workspace-features';
 import { DiscoverySchedule } from './discovery-schedule';
@@ -35,6 +35,21 @@ export function Intents({ state, run, busy }: Shared) {
   const [editingBase, setEditingBase] = useState<number | null>(null);
   const editingCurrent = state.intents.find(intent => intent.id === editingId);
   const editingConflict = editingId !== null && editingCurrent?.version !== editingBase;
+  const needsClarification = semantics && (semantics.direction === 'unknown' || semantics.category === 'unknown' || semantics.requirements.some(requirement => requirement.strength === 'unknown') || semantics.clarificationQuestions.length > 0);
+
+  function reviewRequirement(index: number, strength: IntentSemantics['requirements'][number]['strength']) {
+    setSemantics(current => {
+      if (!current) return current;
+      const requirement = current.requirements[index];
+      const requirements = current.requirements.map((value, position) => position === index ? { ...value, strength } : value);
+      const question = requirementReviewQuestion(requirement);
+      const questions = current.clarificationQuestions.filter(value => value !== question);
+      // Keep a shared review question while another requirement with the same label remains unresolved.
+      if (requirements.some(value => value.strength === 'unknown' && requirementReviewQuestion(value) === question) && questions.length < 5) questions.push(question);
+      return { ...current, requirements, clarificationQuestions: questions };
+    });
+    setApproved(false);
+  }
 
   function edit(intent: Intent) {
     setEditingId(intent.id);
@@ -79,6 +94,7 @@ export function Intents({ state, run, busy }: Shared) {
 
         <form className="intent-review-form" onSubmit={event => { event.preventDefault(); void run(async () => {
           if (editingConflict) throw new Error('This intent changed in another session. Load its latest revision before saving.');
+          if (!approved || !semantics || needsClarification) throw new Error('Review the interpretation, resolve clarification questions and approve the public fields before saving.');
           await api('intent', { id: editingId || undefined, goal, summary, tags: normalizeTopics(topics.split(',')), expiresAt: new Date(expiry).toISOString(), publicApproved: approved, demoOrigin: demo, semantics });
           newIntent();
         }, 'Intent draft saved below. Publication requires a separate wallet approval.'); }}>
@@ -86,12 +102,12 @@ export function Intents({ state, run, busy }: Shared) {
           <Field label="I am looking for a"><select value={goal} onChange={event => { setGoal(event.target.value as Goal); setSemantics(undefined); setApproved(false); }}>{purposes.map(purpose => <option key={purpose}>{purpose}</option>)}</select></Field>
           <Field label="Public intent summary"><textarea required minLength={10} maxLength={1000} rows={4} value={summary} onChange={event => { setSummary(event.target.value); setSemantics(undefined); setApproved(false); }} placeholder="The connection you hope to make, without private details." /></Field>
           <Button kind="secondary" disabled={busy || !summary.trim() || !disclose} onClick={() => void run(() => interpret(summary, false), 'Updated intent interpretation. Review direction, requirements and public fields.')}>Interpret the reviewed summary<ArrowRight size={15} /></Button>
-          {semantics ? <section className="interpretation-card"><div><strong>{semantics.direction.replaceAll('-', ' ')}</strong><Tag>From your text</Tag></div><p>Role: {semantics.canonicalRole?.value || 'Not specified'}</p>{semantics.clarificationQuestions.map(question => <p key={question} className="clarification-question">{question}</p>)}{semantics.requirements.length > 0 && <details><summary>Review requirements and their source text</summary>{semantics.requirements.map((requirement, index) => <p key={index}><strong>{requirement.strength}:</strong> {requirement.kind} {requirement.value}<br /><small>Source: {requirement.sourceQuote}</small></p>)}</details>}<small>Unknown requirements do not establish eligibility. A similar subject alone does not establish mutual fit.</small></section> : <p className="small-copy interpretation-hint">Interpret the summary before saving. Editing the public summary requires a new interpretation and review.</p>}
+          {semantics ? <section className="interpretation-card" aria-label="Review intent interpretation"><div><strong>{semantics.direction.replaceAll('-', ' ')}</strong><Tag>Review before saving</Tag></div><p>Role: {semantics.canonicalRole?.value || 'Not specified'}</p>{semantics.clarificationQuestions.map(question => <p key={question} className="clarification-question">{question}</p>)}{semantics.requirements.length > 0 && <><p>Correct how strongly each requirement matters to you. Mandatory requirements must be met. Preferred requirements are useful but optional. Unknown requirements need clarification.</p>{semantics.requirements.map((requirement, index) => <article key={index} aria-label={`Requirement ${index + 1}`}><p><strong>Requirement {index + 1}:</strong> {requirement.kind}: {requirement.value}</p><Field label={`Strength for requirement ${index + 1}: ${requirement.value}`} hint={`Original source quote: ${requirement.sourceQuote}`}><select disabled={busy} value={requirement.strength} onChange={event => reviewRequirement(index, event.target.value as IntentSemantics['requirements'][number]['strength'])}><option value="mandatory">Mandatory</option><option value="preferred">Preferred</option><option value="unknown">Unknown, needs clarification</option></select></Field></article>)}<p>Changing a strength clears public approval. Saving creates a private draft. Existing public records change only after you separately review and confirm publication.</p></>}{needsClarification && <p role="status">Resolve unknown requirements and clarification questions before saving. Correct requirement strengths here, or edit the summary and interpret it again for other corrections.</p>}<small>Unknown requirements do not establish eligibility. A similar subject alone does not establish mutual fit.</small></section> : <p className="small-copy interpretation-hint">Interpret the summary before saving. Editing the public summary requires a new interpretation and review.</p>}
           <Field label="Topics"><input value={topics} onChange={event => { setTopics(event.target.value); setApproved(false); }} placeholder="Comma-separated tags" /></Field>
           <Field label="Discoverable until" hint="Shown in your device time zone. Expiry stops new matching, not historical copies."><input required type="datetime-local" value={expiry} onChange={event => { setExpiry(event.target.value); setApproved(false); }} /></Field>
           <Checkline checked={demo} onChange={next => { setDemo(next); setApproved(false); }}>This is a fictional demonstration intent</Checkline>
           <Checkline checked={approved} onChange={setApproved}>I approve these fields for public publication. Public records may remain in historical copies after expiry.</Checkline>
-          <div className="form-actions"><Button type="submit" disabled={busy || !approved || !semantics || editingConflict}>Save reviewed intent<Check size={16} /></Button></div>
+          <div className="form-actions"><Button type="submit" disabled={busy || !approved || !semantics || !!needsClarification || editingConflict}>Save reviewed intent<Check size={16} /></Button></div>
         </form>
       </section>
 

@@ -33,12 +33,74 @@ export async function interpretIntent(provider: StructuredProvider, text: string
       "A person asking to join an existing team is joining-team. A team asking for an additional member is seeking-teammate. Both use category teammate. Cofounder requests use cofounding and category cofounder. Joint project work uses collaborating and category collaborator.",
       "canonicalRole is the requested counterpart role or job role. Offers are only explicitly claimed skills, roles or terms supplied by this person, not desired skills. Topics describe subject matter and never prove qualifications. Every value needs an exact sourceQuote substring, including category and direction evidence. Use concise grounded labels, never invented qualifications.",
       "Evidence strings contain only literal characters copied from the input. Do not add quotation mark characters around a source quote unless those characters occur in the input itself.",
-      "Only explicit must, required, non-negotiable or equivalent language creates a mandatory requirement. Preferences stay preferred. Unclear requirements stay unknown. Never invent salary, location, remote work, years of experience, availability, qualifications or employment identity.",
+      "Only explicit must, required, non-negotiable or equivalent language creates a mandatory requirement, and its sourceQuote must include that force. Would like, prefer, ideally and nice-to-have express preferences, never mandatory requirements. A negated requirement is not a positive desired qualification. Unclear force stays unknown with a clarification question. Never invent salary, location, remote work, years of experience, availability, qualifications or employment identity.",
       "Use unknown and null for ambiguous category or direction and ask a specific clarification question. If an essential requirement is unclear, ask a question rather than inventing it. Empty arrays represent absent facts. Do not set permissions, public visibility, consent or authority. Use full words and no em dash punctuation.",
     ].join(" "),
   });
-  const output = assertIntentEvidence(text, result.output);
+  // Model-only review correction. Persisted and owner-authored semantics use the unchanged evidence validator.
+  const output = reviewExtractedRequirementForce(text, assertIntentEvidence(text, result.output));
   return { ...result, output };
+}
+
+type RequirementForce = 'mandatory' | 'preferred' | 'unclear';
+function normalizedForceText(fragment: string) {
+  return fragment.toLowerCase().replaceAll('\u2019', "'")
+    .replace(/\bnot\s+optional\b/g, 'mandatory').replace(/\bnot\s+negotiable\b/g, 'nonnegotiable');
+}
+function negatedOrQuestionedForce(fragment: string): boolean {
+  return /\b(?:not|never|no|without|cannot|optional)\b|\b(?:don|doesn|didn|isn|aren|wasn|weren|mustn|needn|wouldn|won|can)'t\b|\?/i.test(normalizedForceText(fragment));
+}
+function englishRequirementForce(fragment: string): RequirementForce {
+  const value = normalizedForceText(fragment);
+  // Negation, questions and conditional force need owner interpretation. They are not positive qualifications.
+  if (negatedOrQuestionedForce(fragment) || /\b(?:if|unless|whether|may|might|could|should|perhaps|formerly|previously)\b|\bused\s+to\b/.test(value)) return 'unclear';
+  const mandatory = /\b(?:must|shall|mandatory|require|requires|required|essential|prerequisite|nonnegotiable|non[- ]negotiable)\b/.test(value);
+  const preferred = /\b(?:prefer|prefers|preferred|preferably|ideally|desirable)\b|\bwould\s+(?:like|appreciate)\b|\bnice[- ]to[- ]have\b|\b(?:a|an)\s+(?:bonus|plus)\b/.test(value);
+  if (mandatory && /\bwould\b/.test(value)) return 'unclear';
+  return mandatory && !preferred ? 'mandatory' : preferred && !mandatory ? 'preferred' : 'unclear';
+}
+function requirementQuoteContexts(text: string, quote: string): string[] {
+  const contexts: string[] = [];
+  let offset = text.indexOf(quote);
+  while (offset !== -1 && contexts.length < 17) {
+    const start = Math.max(...['.', '!', '?', ';', '\n'].map(separator => text.lastIndexOf(separator, offset - 1))) + 1;
+    const endOffset = offset + quote.length;
+    const ends = ['.', '!', '?', ';', '\n'].map(separator => text.indexOf(separator, endOffset - 1)).filter(index => index !== -1);
+    const end = ends.length ? Math.min(...ends) + 1 : text.length;
+    contexts.push(text.slice(start, end));
+    offset = text.indexOf(quote, endOffset);
+  }
+  return contexts;
+}
+function quotedRequirementForce(text: string, quote: string): RequirementForce {
+  const contexts = requirementQuoteContexts(text, quote);
+  if (!contexts.length || contexts.length > 16) return 'unclear';
+  const quoted = englishRequirementForce(quote), surrounding = contexts.map(englishRequirementForce);
+  if (quoted === 'mandatory' && surrounding.every(force => force === 'mandatory')) return 'mandatory';
+  if (quoted !== 'mandatory' && surrounding.every(force => force === 'preferred')) return 'preferred';
+  return 'unclear';
+}
+export function requirementReviewQuestion(requirement: Pick<IntentSemantics['requirements'][number], 'kind' | 'value'>): string {
+  return `Requirement review: Mark "${requirement.value}" (${requirement.kind}) required or preferred, or remove it.`;
+}
+function reviewExtractedRequirementForce(text: string, original: IntentSemantics): IntentSemantics {
+  const output = structuredClone(original);
+  const reviewQuestions: string[] = [];
+  for (const requirement of output.requirements) {
+    if (requirement.strength === 'unknown') continue;
+    const force = quotedRequirementForce(text, requirement.sourceQuote);
+    if (requirement.strength === 'mandatory' && force !== 'mandatory') {
+      requirement.strength = force === 'preferred' ? 'preferred' : 'unknown';
+      if (requirement.strength === 'unknown') reviewQuestions.push(requirementReviewQuestion(requirement));
+    } else if (requirement.strength === 'preferred' && force === 'mandatory') {
+      requirement.strength = 'unknown'; reviewQuestions.push(requirementReviewQuestion(requirement));
+    } else if (requirement.strength === 'preferred' && requirementQuoteContexts(text, requirement.sourceQuote).some(negatedOrQuestionedForce)) {
+      requirement.strength = 'unknown'; reviewQuestions.push(requirementReviewQuestion(requirement));
+    }
+  }
+  // Preserve existing essential questions. A full question list already blocks publication.
+  for (const question of reviewQuestions) if (output.clarificationQuestions.length < 5 && !output.clarificationQuestions.includes(question)) output.clarificationQuestions.push(question);
+  return assertIntentEvidence(text, output);
 }
 
 export function assertIntentEvidence(text: string, value: unknown): IntentSemantics {
