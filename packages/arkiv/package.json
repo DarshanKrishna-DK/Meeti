@@ -1,0 +1,12 @@
+{
+  "name": "@meeti/arkiv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@arkiv-network/sdk": "1.0.1",
+    "viem": "^2.38.0",
+    "zod": "^4.1.0"
+  }
+}

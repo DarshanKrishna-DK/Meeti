@@ -1,0 +1,46 @@
+{
+  "name": "meeti",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3173",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port 3173",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "db:migrate": "tsx --env-file=.env.local scripts/migrate.ts",
+    "setup": "node scripts/setup.mjs",
+    "seed": "tsx --env-file=.env.local scripts/seed.ts",
+    "arkiv:query": "tsx --env-file=.env.local arkiv/query.ts",
+    "check:secrets": "node scripts/secret-scan.mjs",
+    "demo:doctor": "tsx --env-file=.env.local scripts/demo-doctor.ts",
+    "matching:live": "tsx --env-file=.env.local packages/matching/evaluate-live.ts",
+    "matching:accounts": "tsx --env-file=.env.local scripts/live-matching.ts"
+  },
+  "dependencies": {
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.1.0",
+    "viem": "^2.38.0",
+    "@arkiv-network/sdk": "1.0.1",
+    "lucide-react": "^0.552.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "vitest": "^4.0.0",
+    "@playwright/test": "^1.56.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "tsx": "^4.20.0"
+  }
+}

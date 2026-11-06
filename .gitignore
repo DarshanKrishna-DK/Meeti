@@ -1,0 +1,37 @@
+node_modules/
+.next/
+.next-e2e/
+.next-preview/
+.env*
+!.env.example
+.local-data/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+*.log
+artifacts/
+
+# Private product inputs, operational evidence and local agent configuration.
+docs/
+.agents/
+.codex/
+AGENTS.md
+DESIGN.md
+DEVELOPMENT_LOG.md
+To-do.md
+Meeti_Logo.png
+
+# Tool caches, local exports and machine-specific editor state.
+.vercel/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.bak
+*.tmp
+*.swp

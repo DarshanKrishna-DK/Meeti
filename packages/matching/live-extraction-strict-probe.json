@@ -1,0 +1,61 @@
+﻿{
+  "kind": "live-extraction-synthetic",
+  "total": 1,
+  "passed": 1,
+  "results": [
+    {
+      "expected": "joining-team",
+      "actual": "joining-team",
+      "passed": true,
+      "clarificationCount": 0,
+      "output": {
+        "schemaVersion": 1,
+        "category": "teammate",
+        "categoryEvidence": "join a hackathon team",
+        "direction": "joining-team",
+        "directionEvidence": "join a hackathon team",
+        "canonicalRole": null,
+        "topics": [
+          {
+            "value": "decentralized storage",
+            "sourceQuote": "decentralized storage"
+          }
+        ],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": []
+      },
+      "inference": {
+        "requestId": "f85597e7-7a43-499e-a25d-c96e880ce428",
+        "providerRequestId": "chatcmpl-a000d021-5874-48c2-9544-638a081a164f",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 1268,
+        "outputTokens": 135,
+        "estimatedCostUsd": 0.0001356,
+        "startedAt": "2026-11-06T08:26:43.617Z",
+        "completedAt": "2026-11-06T08:26:44.648Z"
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-a000d021-5874-48c2-9544-638a081a164f",
+      "usage": {
+        "queue_time": 0.285179892,
+        "prompt_tokens": 1268,
+        "prompt_time": 0.065136718,
+        "completion_tokens": 135,
+        "completion_time": 0.180493942,
+        "total_tokens": 1403,
+        "total_time": 0.24563066,
+        "completion_tokens_details": {
+          "reasoning_tokens": 49
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"teammate\",\"categoryEvidence\":\"join a hackathon team\",\"direction\":\"joining-team\",\"directionEvidence\":\"join a hackathon team\",\"canonicalRole\":null,\"topics\":[{\"value\":\"decentralized storage\",\"sourceQuote\":\"decentralized storage\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[]}"
+    }
+  ]
+}

@@ -1,0 +1,230 @@
+﻿{
+  "kind": "live-extraction-synthetic",
+  "total": 8,
+  "passed": 1,
+  "results": [
+    {
+      "expected": "seeking-job",
+      "actual": "seeking-job",
+      "passed": true,
+      "clarificationCount": 0,
+      "output": {
+        "schemaVersion": 1,
+        "category": "collaborator",
+        "categoryEvidence": "I build machine learning systems and I am looking for an AI engineering job.",
+        "direction": "seeking-job",
+        "directionEvidence": "I build machine learning systems and I am looking for an AI engineering job.",
+        "canonicalRole": {
+          "value": "AI engineer",
+          "sourceQuote": "I build machine learning systems and I am looking for an AI engineering job."
+        },
+        "topics": [],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": []
+      },
+      "inference": {
+        "requestId": "e73ff835-bd94-4040-99e0-dc85292caa47",
+        "providerRequestId": "chatcmpl-aad17216-5dc9-43a1-aac7-32b5d07fa90b",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 623,
+        "outputTokens": 227,
+        "estimatedCostUsd": 0.00011482499999999999,
+        "startedAt": "2026-11-06T08:24:58.159Z",
+        "completedAt": "2026-11-06T08:24:59.133Z"
+      }
+    },
+    {
+      "expected": "hiring",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "seeking-help",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "offering-expertise",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "joining-team",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "seeking-teammate",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "unknown",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "cofounding",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    }
+  ],
+  "diagnostics": [
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-aad17216-5dc9-43a1-aac7-32b5d07fa90b",
+      "usage": {
+        "queue_time": 0.286004011,
+        "prompt_tokens": 623,
+        "prompt_time": 0.039307469,
+        "completion_tokens": 227,
+        "completion_time": 0.264588296,
+        "total_tokens": 850,
+        "total_time": 0.303895765,
+        "completion_tokens_details": {
+          "reasoning_tokens": 89
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\n  \"schemaVersion\": 1,\n  \"category\": \"collaborator\",\n  \"categoryEvidence\": \"I build machine learning systems and I am looking for an AI engineering job.\",\n  \"direction\": \"seeking-job\",\n  \"directionEvidence\": \"I build machine learning systems and I am looking for an AI engineering job.\",\n  \"canonicalRole\": {\n    \"value\": \"AI engineer\",\n    \"sourceQuote\": \"I build machine learning systems and I am looking for an AI engineering job.\"\n  },\n  \"topics\": [],\n  \"offers\": [],\n  \"requirements\": [],\n  \"clarificationQuestions\": []\n}"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-22712a5a-edaf-4944-9b5b-ec923fc86de0",
+      "usage": {
+        "queue_time": 0.058276262,
+        "prompt_tokens": 621,
+        "prompt_time": 0.134338072,
+        "completion_tokens": 180,
+        "completion_time": 0.202699234,
+        "total_tokens": 801,
+        "total_time": 0.337037306,
+        "completion_tokens_details": {
+          "reasoning_tokens": 99
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":\"1\",\"category\":\"collaborator\",\"categoryEvidence\":\"recruiting an artificial intelligence engineer\",\"direction\":\"hiring\",\"directionEvidence\":\"recruiting an artificial intelligence engineer\",\"canonicalRole\":{\"value\":\"artificial intelligence engineer\",\"sourceQuote\":\"artificial intelligence engineer\"},\"topics\":[],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[]}"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-0e642cd7-5a11-49a6-94b1-a2fb9c9ffff6",
+      "usage": {
+        "queue_time": 0.945756018,
+        "prompt_tokens": 620,
+        "prompt_time": 0.037174497,
+        "completion_tokens": 218,
+        "completion_time": 0.258220403,
+        "total_tokens": 838,
+        "total_time": 0.2953949,
+        "completion_tokens_details": {
+          "reasoning_tokens": 75
+        }
+      },
+      "finishReason": "stop",
+      "content": "```json\n{\n  \"schemaVersion\": 1,\n  \"category\": \"mentor\",\n  \"categoryEvidence\": \"senior designer to mentor me in user research\",\n  \"direction\": \"seeking-help\",\n  \"directionEvidence\": \"senior designer to mentor me in user research\",\n  \"canonicalRole\": {\n    \"value\": \"senior designer\",\n    \"sourceQuote\": \"senior designer\"\n  },\n  \"topics\": [\n    {\n      \"value\": \"user research\",\n      \"sourceQuote\": \"user research\"\n    }\n  ],\n  \"offers\": [],\n  \"requirements\": [],\n  \"clarificationQuestions\": []\n}\n```"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-48435a66-17d7-48a9-958b-9f93fcc8822d",
+      "usage": {
+        "queue_time": 0.285767256,
+        "prompt_tokens": 619,
+        "prompt_time": 0.031899039,
+        "completion_tokens": 287,
+        "completion_time": 0.370080224,
+        "total_tokens": 906,
+        "total_time": 0.401979263,
+        "completion_tokens_details": {
+          "reasoning_tokens": 110
+        }
+      },
+      "finishReason": "stop",
+      "content": ""
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-60be696a-9d45-452f-88f8-756ade66cbe2",
+      "usage": {
+        "queue_time": 0.358445263,
+        "prompt_tokens": 621,
+        "prompt_time": 0.031353917,
+        "completion_tokens": 226,
+        "completion_time": 0.301704641,
+        "total_tokens": 847,
+        "total_time": 0.333058558,
+        "completion_tokens_details": {
+          "reasoning_tokens": 129
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":\"1\",\"category\":\"collaborator\",\"categoryEvidence\":null,\"direction\":\"seeking-teammate\",\"directionEvidence\":\"I want to join a hackathon team working on decentralized storage.\",\"canonicalRole\":null,\"topics\":[{\"value\":\"decentralized storage\",\"sourceQuote\":\"decentralized storage\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[\"What role would you like to play on the team?\"]}"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-5f0e9660-d758-46bc-a33e-c36ddefbda7d",
+      "usage": {
+        "queue_time": 0.257092039,
+        "prompt_tokens": 622,
+        "prompt_time": 0.036388671,
+        "completion_tokens": 239,
+        "completion_time": 0.330668547,
+        "total_tokens": 861,
+        "total_time": 0.367057218,
+        "completion_tokens_details": {
+          "reasoning_tokens": 144
+        }
+      },
+      "finishReason": "stop",
+      "content": ""
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-36649834-06dc-4c54-a2c9-8c1f1869dd1b",
+      "usage": {
+        "queue_time": 1.115713455,
+        "prompt_tokens": 614,
+        "prompt_time": 0.049060985,
+        "completion_tokens": 162,
+        "completion_time": 0.193602122,
+        "total_tokens": 776,
+        "total_time": 0.242663107,
+        "completion_tokens_details": {
+          "reasoning_tokens": 29
+        }
+      },
+      "finishReason": "stop",
+      "content": "```json\n{\n  \"schemaVersion\": 1,\n  \"category\": \"unknown\",\n  \"categoryEvidence\": null,\n  \"direction\": \"unknown\",\n  \"directionEvidence\": null,\n  \"canonicalRole\": null,\n  \"topics\": [\n    {\n      \"value\": \"developer relations\",\n      \"sourceQuote\": \"developer relations\"\n    }\n  ],\n  \"offers\": [],\n  \"requirements\": [],\n  \"clarificationQuestions\": [\n    \"Could you tell me whether you are looking to collaborate, seek a role, offer expertise, or something else related to developer relations?\"\n  ]\n}\n```"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-e3618b75-cd26-4182-8fd2-c15eae44dd34",
+      "usage": {
+        "queue_time": 1.353345918,
+        "prompt_tokens": 624,
+        "prompt_time": 0.447324552,
+        "completion_tokens": 294,
+        "completion_time": 0.339455874,
+        "total_tokens": 918,
+        "total_time": 0.786780426,
+        "prompt_tokens_details": {
+          "cached_tokens": 512
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 183
+        }
+      },
+      "finishReason": "stop",
+      "content": ""
+    }
+  ]
+}

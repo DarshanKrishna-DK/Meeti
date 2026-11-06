@@ -1,0 +1,1366 @@
+﻿{
+  "kind": "live-embedding-synthetic-heldout",
+  "model": "nomic-embed-text:v1.5",
+  "threshold": 0.8109079567507437,
+  "calibration": [
+    {
+      "left": "AI engineer",
+      "right": "machine learning developer",
+      "positive": true,
+      "cosine": 0.8498802143784459
+    },
+    {
+      "left": "UI developer",
+      "right": "frontend software engineer",
+      "positive": true,
+      "cosine": 0.8625830393948313
+    },
+    {
+      "left": "DevRel",
+      "right": "developer relations advocate",
+      "positive": true,
+      "cosine": 0.7717301463060116
+    },
+    {
+      "left": "AI engineer",
+      "right": "pastry chef",
+      "positive": false,
+      "cosine": 0.7305736302918201
+    },
+    {
+      "left": "UI developer",
+      "right": "marine biologist",
+      "positive": false,
+      "cosine": 0.7473404907006688
+    },
+    {
+      "left": "DevRel",
+      "right": "forklift operator",
+      "positive": false,
+      "cosine": 0.7719356991230415
+    }
+  ],
+  "developmentCorrect": 5,
+  "developmentTotal": 6,
+  "heldoutTotal": 16,
+  "semanticTopCorrect": 13,
+  "keywordTopCorrect": 4,
+  "keywordTies": 9,
+  "positiveAccepted": 14,
+  "negativeRejected": 8,
+  "sameDirectionRejected": 16,
+  "semanticConfusion": {
+    "samples": 32,
+    "truePositive": 14,
+    "falsePositive": 8,
+    "falseNegative": 2,
+    "trueNegative": 8,
+    "precision": 0.6363636363636364,
+    "recall": 0.875
+  },
+  "deterministicIncompatibleNegatives": 16,
+  "latencyMs": {
+    "total": 2018.6981999999998,
+    "min": 90.08380000000011,
+    "median": 100.7307000000003,
+    "max": 110.70449999999983
+  },
+  "usage": {
+    "requests": 22,
+    "reservedCostUsd": 0,
+    "cacheEntries": 57
+  },
+  "repeatedInputReceipt": {
+    "model": "nomic-embed-text:v1.5",
+    "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+    "dimensions": 768,
+    "format": "meeti.semantic.v1",
+    "requests": 0,
+    "cacheHits": 1,
+    "inputTokens": 0,
+    "estimatedCostUsd": 0
+  },
+  "results": [
+    {
+      "sourceRole": "backend engineer",
+      "relevantRole": "server side software developer",
+      "unrelatedRole": "wedding photographer",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000002",
+          "owner": "0x0000000000000000000000000000000000000002",
+          "intentId": "synthetic-evaluation-2",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8718727613245395,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000003",
+          "owner": "0x0000000000000000000000000000000000000003",
+          "intentId": "synthetic-evaluation-3",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7124543004590679,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000004",
+          "owner": "0x0000000000000000000000000000000000000004",
+          "intentId": "synthetic-evaluation-4",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "cybersecurity analyst",
+      "relevantRole": "information security specialist",
+      "unrelatedRole": "landscape architect",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000006",
+          "owner": "0x0000000000000000000000000000000000000006",
+          "intentId": "synthetic-evaluation-6",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.9161767732250414,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000007",
+          "owner": "0x0000000000000000000000000000000000000007",
+          "intentId": "synthetic-evaluation-7",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7359521710679194,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000008",
+          "owner": "0x0000000000000000000000000000000000000008",
+          "intentId": "synthetic-evaluation-8",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "data scientist",
+      "relevantRole": "statistical machine learning researcher",
+      "unrelatedRole": "restaurant manager",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000000a",
+          "owner": "0x000000000000000000000000000000000000000a",
+          "intentId": "synthetic-evaluation-10",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.884633203578084,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000000b",
+          "owner": "0x000000000000000000000000000000000000000b",
+          "intentId": "synthetic-evaluation-11",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7508317986744693,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000000c",
+          "owner": "0x000000000000000000000000000000000000000c",
+          "intentId": "synthetic-evaluation-12",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "technical writer",
+      "relevantRole": "software documentation author",
+      "unrelatedRole": "electrical installation technician",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000000e",
+          "owner": "0x000000000000000000000000000000000000000e",
+          "intentId": "synthetic-evaluation-14",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8772260486332382,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000000f",
+          "owner": "0x000000000000000000000000000000000000000f",
+          "intentId": "synthetic-evaluation-15",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7955074334108073,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000010",
+          "owner": "0x0000000000000000000000000000000000000010",
+          "intentId": "synthetic-evaluation-16",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "smart contract auditor",
+      "relevantRole": "Solidity security reviewer",
+      "unrelatedRole": "financial tax accountant",
+      "semanticTopCorrect": false,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000013",
+          "owner": "0x0000000000000000000000000000000000000013",
+          "intentId": "synthetic-evaluation-19",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8511448500246556,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000012",
+          "owner": "0x0000000000000000000000000000000000000012",
+          "intentId": "synthetic-evaluation-18",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8253603759377894,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000014",
+          "owner": "0x0000000000000000000000000000000000000014",
+          "intentId": "synthetic-evaluation-20",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "accessibility designer",
+      "relevantRole": "inclusive user experience specialist",
+      "unrelatedRole": "building site supervisor",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000016",
+          "owner": "0x0000000000000000000000000000000000000016",
+          "intentId": "synthetic-evaluation-22",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8661946510208537,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000017",
+          "owner": "0x0000000000000000000000000000000000000017",
+          "intentId": "synthetic-evaluation-23",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7863332425343045,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000018",
+          "owner": "0x0000000000000000000000000000000000000018",
+          "intentId": "synthetic-evaluation-24",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "DevRel engineer",
+      "relevantRole": "developer experience community advocate",
+      "unrelatedRole": "enterprise sales representative",
+      "semanticTopCorrect": true,
+      "positiveAccepted": false,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000001a",
+          "owner": "0x000000000000000000000000000000000000001a",
+          "intentId": "synthetic-evaluation-26",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7836997847411495,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000001b",
+          "owner": "0x000000000000000000000000000000000000001b",
+          "intentId": "synthetic-evaluation-27",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7360466765837506,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000001c",
+          "owner": "0x000000000000000000000000000000000000001c",
+          "intentId": "synthetic-evaluation-28",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "product designer",
+      "relevantRole": "user experience designer",
+      "unrelatedRole": "graphic print designer",
+      "semanticTopCorrect": false,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0.25,
+      "unrelatedKeyword": 0.25,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000001f",
+          "owner": "0x000000000000000000000000000000000000001f",
+          "intentId": "synthetic-evaluation-31",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.9027775551467779,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000001e",
+          "owner": "0x000000000000000000000000000000000000001e",
+          "intentId": "synthetic-evaluation-30",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8909217232606134,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000020",
+          "owner": "0x0000000000000000000000000000000000000020",
+          "intentId": "synthetic-evaluation-32",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "frontend architecture mentor",
+      "relevantRole": "senior frontend architecture adviser",
+      "unrelatedRole": "pastry baking tutor",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": true,
+      "keywordTie": false,
+      "relevantKeyword": 0.4,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000022",
+          "owner": "0x0000000000000000000000000000000000000022",
+          "intentId": "synthetic-evaluation-34",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.9509190210620482,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 36,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000023",
+          "owner": "0x0000000000000000000000000000000000000023",
+          "intentId": "synthetic-evaluation-35",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.7372990206037269,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 36,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000024",
+          "owner": "0x0000000000000000000000000000000000000024",
+          "intentId": "synthetic-evaluation-36",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "renewable energy startup cofounder",
+      "relevantRole": "clean energy venture founder",
+      "unrelatedRole": "mobile gaming startup founder",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": true,
+      "relevantKeyword": 0.14285714285714285,
+      "unrelatedKeyword": 0.14285714285714285,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000026",
+          "owner": "0x0000000000000000000000000000000000000026",
+          "intentId": "synthetic-evaluation-38",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.939254389848978,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 38,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000027",
+          "owner": "0x0000000000000000000000000000000000000027",
+          "intentId": "synthetic-evaluation-39",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8579341181173273,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 38,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000028",
+          "owner": "0x0000000000000000000000000000000000000028",
+          "intentId": "synthetic-evaluation-40",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible.",
+            "The purpose categories differ and require separate permission scope."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "blockchain hackathon developer",
+      "relevantRole": "web3 hackathon builder",
+      "unrelatedRole": "medical billing team member",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": true,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": true,
+      "keywordTie": false,
+      "relevantKeyword": 0.2,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000002a",
+          "owner": "0x000000000000000000000000000000000000002a",
+          "intentId": "synthetic-evaluation-42",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8881501425471643,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 41,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000002b",
+          "owner": "0x000000000000000000000000000000000000002b",
+          "intentId": "synthetic-evaluation-43",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.730799571484678,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 41,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000002c",
+          "owner": "0x000000000000000000000000000000000000002c",
+          "intentId": "synthetic-evaluation-44",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "computational biology researcher",
+      "relevantRole": "bioinformatics research collaborator",
+      "unrelatedRole": "structural engineering researcher",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": false,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0.2,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000002e",
+          "owner": "0x000000000000000000000000000000000000002e",
+          "intentId": "synthetic-evaluation-46",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.9395953998641293,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 36,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000002f",
+          "owner": "0x000000000000000000000000000000000000002f",
+          "intentId": "synthetic-evaluation-47",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8668139819739465,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 36,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000030",
+          "owner": "0x0000000000000000000000000000000000000030",
+          "intentId": "synthetic-evaluation-48",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "software engineer",
+      "relevantRole": "backend software developer",
+      "unrelatedRole": "database administrator",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": true,
+      "keywordTie": false,
+      "relevantKeyword": 0.25,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000032",
+          "owner": "0x0000000000000000000000000000000000000032",
+          "intentId": "synthetic-evaluation-50",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8946707162552784,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000033",
+          "owner": "0x0000000000000000000000000000000000000033",
+          "intentId": "synthetic-evaluation-51",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8249484943662221,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 32,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000034",
+          "owner": "0x0000000000000000000000000000000000000034",
+          "intentId": "synthetic-evaluation-52",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "data engineer",
+      "relevantRole": "ETL pipeline developer",
+      "unrelatedRole": "business data analyst",
+      "semanticTopCorrect": false,
+      "positiveAccepted": false,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": false,
+      "relevantKeyword": 0,
+      "unrelatedKeyword": 0.25,
+      "ranked": [
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000037",
+          "owner": "0x0000000000000000000000000000000000000037",
+          "intentId": "synthetic-evaluation-55",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8999283004370724,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000036",
+          "owner": "0x0000000000000000000000000000000000000036",
+          "intentId": "synthetic-evaluation-54",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": 0.8089029712521995,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity is below the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 33,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000038",
+          "owner": "0x0000000000000000000000000000000000000038",
+          "intentId": "synthetic-evaluation-56",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "developer advocate",
+      "relevantRole": "developer community experience specialist",
+      "unrelatedRole": "software developer recruiter",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": false,
+      "keywordTie": false,
+      "relevantKeyword": 0.2,
+      "unrelatedKeyword": 0.25,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000003a",
+          "owner": "0x000000000000000000000000000000000000003a",
+          "intentId": "synthetic-evaluation-58",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8992256586912011,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000003b",
+          "owner": "0x000000000000000000000000000000000000003b",
+          "intentId": "synthetic-evaluation-59",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.837444632273177,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 34,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000003c",
+          "owner": "0x000000000000000000000000000000000000003c",
+          "intentId": "synthetic-evaluation-60",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    },
+    {
+      "sourceRole": "AI product manager",
+      "relevantRole": "machine learning product lead",
+      "unrelatedRole": "machine learning research scientist",
+      "semanticTopCorrect": true,
+      "positiveAccepted": true,
+      "negativeRejected": false,
+      "sameDirectionRejected": true,
+      "keywordTopCorrect": true,
+      "keywordTie": false,
+      "relevantKeyword": 0.16666666666666666,
+      "unrelatedKeyword": 0,
+      "ranked": [
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000003e",
+          "owner": "0x000000000000000000000000000000000000003e",
+          "intentId": "synthetic-evaluation-62",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.8982756235378897,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 35,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x000000000000000000000000000000000000000000000000000000000000003f",
+          "owner": "0x000000000000000000000000000000000000003f",
+          "intentId": "synthetic-evaluation-63",
+          "version": 1,
+          "state": "match",
+          "eligible": true,
+          "cosine": 0.834574576467789,
+          "reasons": [
+            "The relationship directions are complementary and deterministic gates passed.",
+            "Semantic similarity meets the configured advisory threshold."
+          ],
+          "requirementChecks": [],
+          "embedding": {
+            "model": "nomic-embed-text:v1.5",
+            "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+            "dimensions": 768,
+            "format": "meeti.semantic.v1",
+            "requests": 1,
+            "cacheHits": 0,
+            "inputTokens": 35,
+            "estimatedCostUsd": 0
+          },
+          "preferenceFraction": null
+        },
+        {
+          "arkivKey": "0x0000000000000000000000000000000000000000000000000000000000000040",
+          "owner": "0x0000000000000000000000000000000000000040",
+          "intentId": "synthetic-evaluation-64",
+          "version": 1,
+          "state": "no-match",
+          "eligible": false,
+          "cosine": null,
+          "reasons": [
+            "The relationship directions are incompatible."
+          ],
+          "requirementChecks": [],
+          "embedding": null,
+          "preferenceFraction": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+﻿{
+  "kind": "live-embedding-development-only",
+  "threshold": 0.8485730781409865,
+  "developmentCorrect": 6,
+  "developmentTotal": 6,
+  "calibration": [
+    {
+      "left": "AI engineer",
+      "right": "machine learning developer",
+      "positive": true,
+      "cosine": 0.9309805173636887
+    },
+    {
+      "left": "UI developer",
+      "right": "frontend software engineer",
+      "positive": true,
+      "cosine": 1
+    },
+    {
+      "left": "DevRel",
+      "right": "developer relations advocate",
+      "positive": true,
+      "cosine": 1
+    },
+    {
+      "left": "AI engineer",
+      "right": "pastry chef",
+      "positive": false,
+      "cosine": 0.7355899569636076
+    },
+    {
+      "left": "UI developer",
+      "right": "marine biologist",
+      "positive": false,
+      "cosine": 0.7661656389182843
+    },
+    {
+      "left": "DevRel",
+      "right": "forklift operator",
+      "positive": false,
+      "cosine": 0.7575418350387406
+    }
+  ],
+  "usage": {
+    "requests": 6,
+    "reservedCostUsd": 0,
+    "cacheEntries": 7
+  },
+  "model": "nomic-embed-text:v1.5",
+  "format": "meeti.semantic.v2",
+  "modelRevision": "d4a5d614946e6d5e4173cc63093a9b2ff39e7d85b35ffb2bb311fcf5bca51fb8",
+  "heldoutEvaluated": false
+}

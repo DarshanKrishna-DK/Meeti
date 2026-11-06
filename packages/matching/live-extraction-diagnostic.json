@@ -1,0 +1,59 @@
+﻿{
+  "kind": "live-extraction-synthetic",
+  "total": 1,
+  "passed": 1,
+  "results": [
+    {
+      "expected": "hiring",
+      "actual": "hiring",
+      "passed": true,
+      "clarificationCount": 0,
+      "output": {
+        "schemaVersion": 1,
+        "category": "collaborator",
+        "categoryEvidence": "Our startup is recruiting an artificial intelligence engineer to join our staff.",
+        "direction": "hiring",
+        "directionEvidence": "Our startup is recruiting an artificial intelligence engineer to join our staff.",
+        "canonicalRole": {
+          "value": "artificial intelligence engineer",
+          "sourceQuote": "an artificial intelligence engineer"
+        },
+        "topics": [],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": []
+      },
+      "inference": {
+        "requestId": "509210bb-46b7-4728-88bf-bd8c6f21c519",
+        "providerRequestId": "chatcmpl-a1a7dc97-0c8b-4b9a-bdc0-366ab047a2b7",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 724,
+        "outputTokens": 137,
+        "estimatedCostUsd": 0.0000954,
+        "startedAt": "2026-11-06T08:26:21.882Z",
+        "completedAt": "2026-11-06T08:26:25.264Z"
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-a1a7dc97-0c8b-4b9a-bdc0-366ab047a2b7",
+      "usage": {
+        "queue_time": 0.365993551,
+        "prompt_tokens": 724,
+        "prompt_time": 0.042432259,
+        "completion_tokens": 137,
+        "completion_time": 0.232488963,
+        "total_tokens": 861,
+        "total_time": 0.274921222,
+        "completion_tokens_details": {
+          "reasoning_tokens": 46
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"collaborator\",\"categoryEvidence\":\"Our startup is recruiting an artificial intelligence engineer to join our staff.\",\"direction\":\"hiring\",\"directionEvidence\":\"Our startup is recruiting an artificial intelligence engineer to join our staff.\",\"canonicalRole\":{\"value\":\"artificial intelligence engineer\",\"sourceQuote\":\"an artificial intelligence engineer\"},\"topics\":[],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[]}"
+    }
+  ]
+}

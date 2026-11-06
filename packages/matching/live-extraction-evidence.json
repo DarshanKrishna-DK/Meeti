@@ -1,0 +1,47 @@
+﻿{
+  "kind": "live-extraction-synthetic",
+  "total": 8,
+  "passed": 0,
+  "results": [
+    {
+      "expected": "seeking-job",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "hiring",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "seeking-help",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "offering-expertise",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "joining-team",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "seeking-teammate",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    },
+    {
+      "expected": "unknown",
+      "passed": false,
+      "error": "The AI result did not match the required task schema."
+    },
+    {
+      "expected": "cofounding",
+      "passed": false,
+      "error": "The AI provider did not return a complete structured result."
+    }
+  ]
+}

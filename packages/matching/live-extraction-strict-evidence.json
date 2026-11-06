@@ -1,0 +1,263 @@
+﻿{
+  "kind": "live-extraction-synthetic",
+  "total": 6,
+  "passed": 4,
+  "results": [
+    {
+      "expected": "seeking-help",
+      "actual": "seeking-help",
+      "passed": true,
+      "clarificationCount": 0,
+      "output": {
+        "schemaVersion": 1,
+        "category": "mentor",
+        "categoryEvidence": "I want a senior designer to mentor me in user research.",
+        "direction": "seeking-help",
+        "directionEvidence": "I want a senior designer to mentor me in user research.",
+        "canonicalRole": {
+          "value": "senior designer",
+          "sourceQuote": "senior designer"
+        },
+        "topics": [
+          {
+            "value": "user research",
+            "sourceQuote": "user research"
+          }
+        ],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": []
+      },
+      "inference": {
+        "requestId": "2e640615-d434-4f18-9317-196f8a523817",
+        "providerRequestId": "chatcmpl-2010c312-f695-4ee3-b281-b48b8197e5fe",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 1267,
+        "outputTokens": 211,
+        "estimatedCostUsd": 0.00015832499999999999,
+        "startedAt": "2026-11-06T08:27:23.189Z",
+        "completedAt": "2026-11-06T08:27:24.773Z"
+      }
+    },
+    {
+      "expected": "offering-expertise",
+      "passed": false,
+      "error": "Intent extraction cited text that was not supplied."
+    },
+    {
+      "expected": "seeking-teammate",
+      "actual": "seeking-teammate",
+      "passed": true,
+      "clarificationCount": 1,
+      "output": {
+        "schemaVersion": 1,
+        "category": "teammate",
+        "categoryEvidence": "We need one more teammate for our hackathon project on decentralized storage.",
+        "direction": "seeking-teammate",
+        "directionEvidence": "We need one more teammate for our hackathon project on decentralized storage.",
+        "canonicalRole": null,
+        "topics": [
+          {
+            "value": "decentralized storage",
+            "sourceQuote": "We need one more teammate for our hackathon project on decentralized storage."
+          }
+        ],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": [
+          "Could you specify the skills or experience you are looking for in the new teammate?"
+        ]
+      },
+      "inference": {
+        "requestId": "9362d0aa-5f3e-4ba8-976c-2e89c7d01cd0",
+        "providerRequestId": "chatcmpl-fdcf82a3-5bf6-456a-8d98-30219b919009",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 1269,
+        "outputTokens": 232,
+        "estimatedCostUsd": 0.00016477499999999998,
+        "startedAt": "2026-11-06T08:27:25.541Z",
+        "completedAt": "2026-11-06T08:27:26.293Z"
+      }
+    },
+    {
+      "expected": "unknown",
+      "actual": "unknown",
+      "passed": true,
+      "clarificationCount": 1,
+      "output": {
+        "schemaVersion": 1,
+        "category": "unknown",
+        "categoryEvidence": null,
+        "direction": "unknown",
+        "directionEvidence": null,
+        "canonicalRole": null,
+        "topics": [
+          {
+            "value": "developer relations",
+            "sourceQuote": "exploring developer relations."
+          }
+        ],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": [
+          "Could you please clarify what specific information or assistance you are seeking regarding developer relations?"
+        ]
+      },
+      "inference": {
+        "requestId": "db2c7087-54c1-4995-bf1c-8935937e019a",
+        "providerRequestId": "chatcmpl-32e352a5-c407-40e6-80b2-4757a6667321",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 1261,
+        "outputTokens": 175,
+        "estimatedCostUsd": 0.00014707499999999998,
+        "startedAt": "2026-11-06T08:27:26.294Z",
+        "completedAt": "2026-11-06T08:27:26.868Z"
+      }
+    },
+    {
+      "expected": "cofounding",
+      "actual": "cofounding",
+      "passed": true,
+      "clarificationCount": 0,
+      "output": {
+        "schemaVersion": 1,
+        "category": "cofounder",
+        "categoryEvidence": "I am looking for a cofounder",
+        "direction": "cofounding",
+        "directionEvidence": "I am looking for a cofounder to build an accessible education startup together.",
+        "canonicalRole": {
+          "value": "cofounder",
+          "sourceQuote": "I am looking for a cofounder to build an accessible education startup together."
+        },
+        "topics": [
+          {
+            "value": "education",
+            "sourceQuote": "an accessible education startup"
+          },
+          {
+            "value": "accessibility",
+            "sourceQuote": "an accessible education startup"
+          }
+        ],
+        "offers": [],
+        "requirements": [],
+        "clarificationQuestions": []
+      },
+      "inference": {
+        "requestId": "a8531f34-99db-4d78-9356-b1a0ec07d041",
+        "providerRequestId": "chatcmpl-b0f4749f-3a7a-4d3f-8873-560b2003ad1a",
+        "model": "openai/gpt-oss-20b",
+        "inputTokens": 1271,
+        "outputTokens": 215,
+        "estimatedCostUsd": 0.000159825,
+        "startedAt": "2026-11-06T08:27:26.868Z",
+        "completedAt": "2026-11-06T08:27:27.413Z"
+      }
+    },
+    {
+      "expected": "seeking-job",
+      "passed": false,
+      "error": "The AI provider returned HTTP 429."
+    }
+  ],
+  "diagnostics": [
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-2010c312-f695-4ee3-b281-b48b8197e5fe",
+      "usage": {
+        "queue_time": 0.670413174,
+        "prompt_tokens": 1267,
+        "prompt_time": 0.090589017,
+        "completion_tokens": 211,
+        "completion_time": 0.28401992,
+        "total_tokens": 1478,
+        "total_time": 0.374608937,
+        "completion_tokens_details": {
+          "reasoning_tokens": 106
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"mentor\",\"categoryEvidence\":\"I want a senior designer to mentor me in user research.\",\"direction\":\"seeking-help\",\"directionEvidence\":\"I want a senior designer to mentor me in user research.\",\"canonicalRole\":{\"value\":\"senior designer\",\"sourceQuote\":\"senior designer\"},\"topics\":[{\"value\":\"user research\",\"sourceQuote\":\"user research\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[] }"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-b34c6799-1e35-4d70-b734-eccdf5adf3ec",
+      "usage": {
+        "queue_time": 0.313348519,
+        "prompt_tokens": 1266,
+        "prompt_time": 0.063473101,
+        "completion_tokens": 251,
+        "completion_time": 0.339874758,
+        "total_tokens": 1517,
+        "total_time": 0.403347859,
+        "completion_tokens_details": {
+          "reasoning_tokens": 105
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"mentor\",\"categoryEvidence\":\"\\\"I can mentor early career developers on reliable backend design.\\\"\",\"direction\":\"offering-expertise\",\"directionEvidence\":\"\\\"I can mentor early career developers on reliable backend design.\\\"\",\"canonicalRole\":{\"value\":\"mentor\",\"sourceQuote\":\"\\\"I can mentor early career developers on reliable backend design.\\\"\"},\"topics\":[{\"value\":\"backend design\",\"sourceQuote\":\"\\\"I can mentor early career developers on reliable backend design.\\\"\"}],\"offers\":[{\"value\":\"mentor\",\"sourceQuote\":\"\\\"I can mentor early career developers on reliable backend design.\\\"\"}],\"requirements\":[],\"clarificationQuestions\":[] }"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-fdcf82a3-5bf6-456a-8d98-30219b919009",
+      "usage": {
+        "queue_time": 0.316766893,
+        "prompt_tokens": 1269,
+        "prompt_time": 0.077773517,
+        "completion_tokens": 232,
+        "completion_time": 0.299505246,
+        "total_tokens": 1501,
+        "total_time": 0.377278763,
+        "completion_tokens_details": {
+          "reasoning_tokens": 100
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"teammate\",\"categoryEvidence\":\"We need one more teammate for our hackathon project on decentralized storage.\",\"direction\":\"seeking-teammate\",\"directionEvidence\":\"We need one more teammate for our hackathon project on decentralized storage.\",\"canonicalRole\":null,\"topics\":[{\"value\":\"decentralized storage\",\"sourceQuote\":\"We need one more teammate for our hackathon project on decentralized storage.\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[\"Could you specify the skills or experience you are looking for in the new teammate?\"]}"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-32e352a5-c407-40e6-80b2-4757a6667321",
+      "usage": {
+        "queue_time": 0.165864558,
+        "prompt_tokens": 1261,
+        "prompt_time": 0.074237302,
+        "completion_tokens": 175,
+        "completion_time": 0.184713149,
+        "total_tokens": 1436,
+        "total_time": 0.258950451,
+        "completion_tokens_details": {
+          "reasoning_tokens": 91
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"unknown\",\"categoryEvidence\":null,\"direction\":\"unknown\",\"directionEvidence\":null,\"canonicalRole\":null,\"topics\":[{\"value\":\"developer relations\",\"sourceQuote\":\"exploring developer relations.\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[\"Could you please clarify what specific information or assistance you are seeking regarding developer relations?\"]}"
+    },
+    {
+      "status": 200,
+      "model": "openai/gpt-oss-20b",
+      "id": "chatcmpl-b0f4749f-3a7a-4d3f-8873-560b2003ad1a",
+      "usage": {
+        "queue_time": 0.15112734,
+        "prompt_tokens": 1271,
+        "prompt_time": 0.098762512,
+        "completion_tokens": 215,
+        "completion_time": 0.244972414,
+        "total_tokens": 1486,
+        "total_time": 0.343734926,
+        "completion_tokens_details": {
+          "reasoning_tokens": 81
+        }
+      },
+      "finishReason": "stop",
+      "content": "{\"schemaVersion\":1,\"category\":\"cofounder\",\"categoryEvidence\":\"I am looking for a cofounder\",\"direction\":\"cofounding\",\"directionEvidence\":\"I am looking for a cofounder to build an accessible education startup together.\",\"canonicalRole\":{\"value\":\"cofounder\",\"sourceQuote\":\"I am looking for a cofounder to build an accessible education startup together.\"},\"topics\":[{\"value\":\"education\",\"sourceQuote\":\"an accessible education startup\"},{\"value\":\"accessibility\",\"sourceQuote\":\"an accessible education startup\"}],\"offers\":[],\"requirements\":[],\"clarificationQuestions\":[]}"
+    },
+    {
+      "status": 429
+    }
+  ]
+}
