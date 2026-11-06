@@ -1,18 +1,9 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { SEMANTIC_INPUT_FORMAT } from "./semantics";
-
-export class MatchingError extends Error {
-  constructor(public readonly code: "configuration" | "input" | "provider" | "output" | "timeout" | "budget", message: string) {
-    super(message); this.name = "MatchingError";
-  }
-}
-export type EmbeddingReceipt = { model: string; modelRevision: string; dimensions: number; format: string; requests: number; metadataRequests?: number; cacheHits: number; inputTokens: number; estimatedCostUsd: number };
-export interface EmbeddingProvider {
-  readonly model: string;
-  readonly dimensions: number;
-  embed(texts: string[]): Promise<{ vectors: number[][]; receipt: EmbeddingReceipt }>;
-}
+import { MatchingError, contentHash, validateVector, type EmbeddingProvider, type EmbeddingReceipt } from './embedding-core';
+import { OnnxEmbeddingProvider } from './onnx-embeddings';
+export * from './embedding-core';
+export { OnnxEmbeddingProvider } from './onnx-embeddings';
 const configSchema = z.object({
   baseUrl: z.string().url(), protocol: z.enum(["openai", "ollama"]), apiKey: z.string().optional(),
   model: z.string().trim().min(1).max(200), modelRevision: z.string().trim().min(1).max(200), dimensions: z.number().int().min(1).max(8192),
@@ -27,16 +18,6 @@ const configSchema = z.object({
   inputPrefix: z.string().max(100).optional(),
 });
 export type EmbeddingConfig = z.input<typeof configSchema>;
-export function contentHash(text: string): string { return createHash("sha256").update(text, "utf8").digest("hex"); }
-
-export function validateVector(vector: unknown, dimensions: number): number[] {
-  if (!Array.isArray(vector) || vector.length !== dimensions || !vector.every(value => typeof value === "number" && Number.isFinite(value))) {
-    throw new MatchingError("output", "The embedding vector has invalid dimensions or numeric values.");
-  }
-  const scale = Math.max(...vector.map(Math.abs));
-  if (!Number.isFinite(scale) || scale === 0) throw new MatchingError("output", "An embedding vector must have a finite nonzero norm.");
-  return vector;
-}
 
 /** Only vector reuse lives here. Arkiv discovery and ENS authority never come from this cache. */
 export class HttpEmbeddingProvider implements EmbeddingProvider {
@@ -185,6 +166,10 @@ async function readJson(response: Response, maxBytes: number): Promise<unknown> 
 
 export function createEmbeddingProviderFromEnv(env: Record<string, string | undefined>, transport: typeof fetch = fetch) {
   const number = (name: string, fallback: number) => env[name]?.trim() ? Number(env[name]) : fallback;
+  if (env.EMBEDDING_PROTOCOL === 'onnx') return new OnnxEmbeddingProvider({ model: env.EMBEDDING_MODEL ?? '', modelRevision: env.EMBEDDING_MODEL_REVISION ?? '',
+    dimensions: number('EMBEDDING_DIMENSIONS', NaN), directory: env.EMBEDDING_ONNX_DIRECTORY,
+    timeoutMs: number('EMBEDDING_TIMEOUT_MS', 30000), maxRequests: number('EMBEDDING_MAX_REQUESTS', 24), maxBatch: number('EMBEDDING_MAX_BATCH', 16),
+    maxCostUsd: number('EMBEDDING_MAX_COST_USD', 0), inputUsdPerMillion: number('EMBEDDING_INPUT_USD_PER_MILLION', NaN) });
   return new HttpEmbeddingProvider({
     baseUrl: env.EMBEDDING_BASE_URL ?? "", protocol: (env.EMBEDDING_PROTOCOL ?? "openai") as "openai" | "ollama",
     apiKey: env.EMBEDDING_API_KEY || undefined, model: env.EMBEDDING_MODEL ?? "", modelRevision: env.EMBEDDING_MODEL_REVISION ?? "", dimensions: number("EMBEDDING_DIMENSIONS", NaN),

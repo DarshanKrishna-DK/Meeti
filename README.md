@@ -139,7 +139,7 @@ Setup creates .env.local from [.env.example](.env.example) only when missing, ge
 
 | Service | Required configuration | Boundary |
 |---|---|---|
-| Private persistence | DATABASE_PATH, DATA_ENCRYPTION_KEY | Durable SQLite directory; back up the database and encryption key together |
+| Private persistence | DATABASE_PROVIDER, DATABASE_PATH or SUPABASE_DATABASE_URL, SUPABASE_DATABASE_CA, DATA_ENCRYPTION_KEY | SQLite locally or private Postgres for hosting; preserve the matching encryption key |
 | Application | APP_ORIGIN | Exact canonical browser origin, initially http://127.0.0.1:3173 |
 | ENSv2 | ENS_SEPOLIA_RPC_URL, optional ENS_SEPOLIA_AUTH_RPC_URL | Sepolia 11155111; actual names, dedicated resolvers and current grants |
 | Arkiv | ARKIV_ACCESS_KEY | Rabdi 7794095; SDK builds its keyed RPC URL; publishing wallet needs test GLM |
@@ -174,7 +174,7 @@ Get an Arkiv access key through the links in the [official networks hub](https:/
 
 #### Optional private Supabase originals
 
-The application supports the official `@supabase/supabase-js` SDK for encrypted file originals. This does not migrate accounts, sessions, policies, metadata or conversation history from SQLite. Keep one persistent Node backend and its original encryption key. A Supabase project URL alone does not make the current backend suitable for Vercel serverless instances.
+The application supports the official `@supabase/supabase-js` SDK for encrypted file originals. Accounts, sessions, policies and conversation history can now use the separate async Postgres adapter. Select `DATABASE_PROVIDER=postgres` explicitly and follow the deployment steps below. A project URL or Storage key alone is not a Postgres connection credential.
 
 1. Use your own Supabase project. In its Connect or API settings, copy the project HTTPS URL into `SUPABASE_URL` in `.env.local`.
 2. Put its server-only service-role key in `SUPABASE_SERVICE_ROLE_KEY`. Never expose that key through a `NEXT_PUBLIC_*` variable or browser request. Public frontend configuration, when needed, uses only `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
@@ -455,18 +455,26 @@ An earlier live bounded qualification check completed genuine Arkiv reads, six c
 
 ## Deployment
 
-**Do not deploy the current full app unchanged as a Vercel function.** The SQLite database requires persistent storage. A cloud function also cannot reach this laptop's loopback Ollama service. [Vercel confirms the local SQLite limitation](https://vercel.com/kb/guide/is-sqlite-supported-in-vercel).
+The free hosting architecture is **Vercel frontend → HTTPS API on Render Free → Supabase Postgres and private Storage**. `Dockerfile` and `render.yaml` prepare a single Node 24 API process. The Vercel build aliases its API handler to a small proxy, excluding database and native model runtimes. It does not ship `.env.local`, private records or signing vaults.
 
-Choose a reviewed architecture after local acceptance:
+The private Postgres adapter and genuine wallet sign-in have passed a live two-account verification, including replay denial, private profile writes, pool reconnect, tenant separation and transaction rollback. Deployment itself remains pending. The existing Meeti project is in Merci, Mumbai, on the approved free plan.
 
-- **Vercel frontend with persistent HTTPS backend:** retain SQLite on a durable host and provide a same-origin API proxy plus reachable embedding service. Proxy and hosting configuration still need implementation and verification.
-- **Vercel with managed persistence:** migrate the database adapter and transactions, then configure a reachable embedding provider with explicit model, revision, dimensions, quotas and approved cost. This migration is not currently implemented.
+1. For a **new, empty database**, apply `migrations/postgres/001_meeti.sql` with a database administrator in the Supabase SQL editor. It creates the private schema and a restricted `meeti_runtime` role. Do not rerun this bootstrap over an existing installation. The current Meeti project already has this migration applied.
+2. Give that dedicated role a strong generated login password through an authorized administrator. Do not use the administrator password in the application. Do not paste credentials into chat or commit them.
+3. Open the project **Connect** dialog, select **Session pooler**, and copy its exact hostname. Use port `5432`, database `postgres`, and username `meeti_runtime.PROJECT_REF`. Set the password-encoded connection URI as server-only `SUPABASE_DATABASE_URL`.
+4. Open **Database → Settings → SSL Configuration → Download certificate**. Put the PEM contents in `SUPABASE_DATABASE_CA`. Certificate and hostname verification remain enabled. See [Supabase SSL documentation](https://supabase.com/docs/guides/platform/ssl-enforcement).
+5. Set `DATABASE_PROVIDER=postgres` explicitly and preserve `DATA_ENCRYPTION_KEY` when migrating existing encrypted data. Run `npm run db:migrate`; for Postgres this verifies all expected tables without granting runtime DDL rights. Local development defaults to SQLite even when a Postgres credential exists.
+6. Keep `meeti_private` outside the public Data API. Its tables have forced row security, no browser-role access, and a backend-only DML policy. Opaque wallet sessions and object ownership checks enforce tenant separation in the backend. This is not Supabase Auth or an `auth.uid()` integration.
+7. Use Render **Free**, one instance, no disk and no paid worker. Review the account billing state before creating it. Provide the server variables in `render.yaml`, including the exact final frontend `APP_ORIGIN`, CA, encryption key, Arkiv and AI configuration. Keep `WORLD_CAPABILITY_ENABLED=false` and `AGENT_TASK_QUEUE_ENABLED=true`. Do not upload wallet private keys.
+8. The Docker build downloads hash-verified, pinned public CPU model files. Hosted inference uses `EMBEDDING_PROTOCOL=onnx`, `Xenova/all-MiniLM-L6-v2`, 384 dimensions, and revision `751bff37182d3f1213fa05d7196b954e230abad9:q8:mean-l2:max256:tjs4.3.2`. Use the calibration manifest in `packages/matching/live-minilm-v1-evidence.json`, not the Nomic threshold. Input exceeding 256 tokens is rejected instead of silently truncated. Model files are never fetched during inference.
+9. Set only `BACKEND_API_ORIGIN` to the deployed Render HTTPS origin on the Vercel frontend, plus public branding variables. Backend credentials belong on Render. Set the backend `APP_ORIGIN` to the actual Vercel URL before testing wallet signatures; previews on another origin cannot reuse that sign-in domain automatically.
+10. Check `/api/health`, then sign in with two distinct test wallets. Verify a private profile survives reconnect, publish a reviewed expiring Arkiv intent, query it, inspect current ENS authority, and request qualification. Long qualification requests return a durable task identifier and are polled. Refreshing does not resubmit inference. Interrupted tasks require explicit review and retry.
 
-A dedicated Meeti Supabase project has been created in the Merci organization, Mumbai region, under the approved $0/month quote with no paid upgrades. Project health and a read-only PostgreSQL query passed. No existing project was changed by this implementation. The application still uses encrypted SQLite: Supabase provisioning is complete, but application persistence and authentication migration are not implemented or claimed complete.
+Free Render can sleep after idle periods. Discovery runs while the service is awake, with nonoverlapping scheduled work and manual search. This is not guaranteed continuous one-minute execution. The full API imports plus CPU inference used about 421 MiB in a bounded Windows measurement; Linux and active hosted load still need verification against the 512 MiB limit. No hosted success is claimed from the Docker configuration alone.
 
-Prepare Vercel project access, the chosen backend/database host, and the server-side variables listed above. A GitHub-connected dashboard deployment does not require sharing a Vercel token with the app. CLI automation may use a separately scoped VERCEL_TOKEN; it is not a frontend runtime credential. Tokens alone do not solve persistent storage.
+The pinned MiniLM held-out run used 40 labeled pairs: 16 true positives, 2 false positives, 4 false negatives and 18 true negatives, giving 88.9% precision and 80% recall. All 20 same-direction cases were rejected separately. This finite English set does not establish universal or multilingual accuracy. Local inference cost was $0. The model and Transformers.js use Apache 2.0; ONNX Runtime uses MIT. See the pinned model source and evidence manifest for attribution and reproducibility.
 
-Set APP_ORIGIN to the final HTTPS URL. Preserve DATA_ENCRYPTION_KEY when moving existing data. Keep Arkiv and AI keys on the backend. World will later require accepted organization access and the correct client credentials. Never upload a wallet private key as a public frontend variable.
+World remains future scope. The preserved final protected-release gates stay disabled; neither matching nor mutual approval is presented as World verification.
 
 Before hosting, Android optionally supports the same loopback URL through an authorized USB connection:
 

@@ -23,7 +23,7 @@ type Progress = { version: 1; origin: string; sessions: Partial<Record<Label, st
   prepared: Partial<Record<`${Case}:${Label}`, Prepared>>; discovery: Partial<Record<`${Case}:${Label}`, Discovery>>;
   qualifications: Partial<Record<Case, { qualificationId: string; id: string | null }>>; pending?: { step: string; startedAt: string };
   answerReceipts?: Record<string, { inputDigest: string; recordedAt: string }>; meetingGateEvidence?: { proposalId: string; version: number; code: 'WORLD_PAUSED'; checkedAt: string } };
-type MeetingView = ReturnType<typeof import('../packages/server/meetings').meetingDto>;
+type MeetingView = Awaited<ReturnType<typeof import('../packages/server/meetings').meetingDto>>;
 const labelSchema = z.enum(['demo-seeker', 'demo-recruiter']);
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 const answerFileSchema = z.object({ fictional: z.literal(true), qualificationId: z.string().uuid(),

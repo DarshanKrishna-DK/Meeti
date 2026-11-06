@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createEnsAuthorityProvider, decodeInlinePolicyUri } from '../ens';
-import { agent, audit, saveAgent } from './db';
+import { agent, atomic, audit, saveAgent } from './store';
 import { checkOrigin, HttpError, rateLimit, requireUser } from './security';
 import { addressSchema } from './validation';
 import type { Agent } from '../shared/src';
@@ -16,13 +16,13 @@ export async function handleAgentImport(request: Request, key: string, body: unk
   if (key !== 'agent/import/preview' && key !== 'agent/import') return null;
   if (request.method !== 'POST') throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'Use POST to review or import an identity.');
   checkOrigin(request);
-  const actor = requireUser(request);
+  const actor = await requireUser(request);
   if (!actor.wallet) throw new HttpError(409, 'WALLET_REQUIRED', 'Sign in with your owner wallet first.');
-  if (agent(actor.id)) throw new HttpError(409, 'AGENT_EXISTS', 'Manage your existing agent rather than replacing its policy through import.');
+  if (await agent(actor.id)) throw new HttpError(409, 'AGENT_EXISTS', 'Manage your existing agent rather than replacing its policy through import.');
   const input = (key === 'agent/import'
     ? z.object({ ...identity, reviewedDigest: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).strict()
     : z.object(identity).strict()).parse(body);
-  rateLimit(`agent-import:${actor.id}`, 8);
+  await rateLimit(`agent-import:${actor.id}`, 8);
   const rpcUrl = process.env.ENS_SEPOLIA_AUTH_RPC_URL || process.env.ENS_SEPOLIA_RPC_URL;
   if (!rpcUrl) throw new HttpError(503, 'ENS_UNCONFIGURED', 'The ENS connection is not configured.');
   const provider = createEnsAuthorityProvider({ rpcUrl });
@@ -30,7 +30,7 @@ export async function handleAgentImport(request: Request, key: string, body: unk
     try { return await provider.checkAuthority({ ensName: input.ensName, owner: actor.wallet!, delegate: input.delegate, action: 'discover' }); }
     finally { await provider.disconnect(); }
   })();
-  const currentActor = requireUser(request);
+  const currentActor = await requireUser(request);
   if (currentActor.id !== actor.id || currentActor.wallet?.toLowerCase() !== actor.wallet.toLowerCase()) {
     throw new HttpError(403, 'ACCOUNT_CHANGED', 'Your authenticated owner account changed. Review the identity again.');
   }
@@ -50,12 +50,16 @@ export async function handleAgentImport(request: Request, key: string, body: unk
     if (!('reviewedDigest' in input) || typeof input.reviewedDigest !== 'string' || input.reviewedDigest.toLowerCase() !== preview.policyDigest.toLowerCase()) {
       throw new HttpError(409, 'POLICY_CHANGED', 'The public permission policy changed. Review its current values before importing.');
     }
-    if (agent(actor.id)) throw new HttpError(409, 'AGENT_EXISTS', 'An agent was configured in another session. Refresh before continuing.');
-    const value: Agent = { id: randomUUID(), ensName: preview.ensName, owner: preview.owner, delegate: preview.delegate,
-      persona: '', policy, config: { resolverAddress: preview.resolverAddress, policyUri: '' },
-      authority: { allowed: true, reason: result.reason, checkedAt: result.checkedAt, evidence: result } };
-    saveAgent(actor.id, value);
-    audit(actor.id, 'agent_import', 'completed', 'Imported the exact current ENS identity and public policy after owner review.');
+    await atomic(async () => {
+      const committingActor = await requireUser(request);
+      if (committingActor.id !== actor.id || committingActor.wallet?.toLowerCase() !== actor.wallet!.toLowerCase()) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Your authenticated owner account changed. Review the identity again.');
+      if (await agent(actor.id)) throw new HttpError(409, 'AGENT_EXISTS', 'An agent was configured in another session. Refresh before continuing.');
+      const value: Agent = { id: randomUUID(), ensName: preview.ensName, owner: preview.owner, delegate: preview.delegate,
+        persona: '', policy, config: { resolverAddress: preview.resolverAddress, policyUri: '' },
+        authority: { allowed: true, reason: result.reason, checkedAt: result.checkedAt, evidence: result } };
+      await saveAgent(actor.id, value);
+      await audit(actor.id, 'agent_import', 'completed', 'Imported the exact current ENS identity and public policy after owner review.');
+    });
   }
   return Response.json({ data: preview }, { headers: { 'Cache-Control': 'no-store' } });
 }

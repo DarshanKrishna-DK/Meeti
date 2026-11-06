@@ -16,13 +16,13 @@ import { agentRegistrationKey } from '../packages/ens/agent-records';
 const owner = '0x1111111111111111111111111111111111111111', origin = 'http://127.0.0.1:3198';
 let directory: string, actor: UserRow, cookie: string;
 function request() { return new Request(origin + '/api/identity', { method: 'POST', headers: { origin, 'content-type': 'application/json', cookie } }); }
-beforeEach(() => {
+beforeEach(async () => {
   closeDatabase(); directory = mkdtempSync(join(tmpdir(), 'meeti-identity-runtime-'));
   vi.stubEnv('DATABASE_PATH', join(directory, 'test.sqlite')); vi.stubEnv('DATA_ENCRYPTION_KEY', randomBytes(32).toString('hex'));
   vi.stubEnv('APP_ORIGIN', origin); vi.stubEnv('PUBLIC_APP_ORIGIN', ''); vi.stubEnv('ENS_SEPOLIA_RPC_URL', 'https://rpc.fixture.invalid');
   actor = { id: randomUUID(), email: randomUUID() + '@fixture.invalid', password_hash: '', wallet: owner, profile: encrypt({}, 'unused'), created_at: new Date().toISOString() };
   db().prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run(actor.id, actor.email, '', owner, actor.profile, actor.created_at);
-  cookie = createSession(actor.id).split(';')[0];
+  cookie = (await createSession(actor.id)).split(';')[0];
   saveAgent(actor.id, { id: randomUUID(), ensName: 'agent.fixture.eth', owner, delegate: '0x2222222222222222222222222222222222222222', persona: '', config: {}, authority: null,
     policy: { version: 1, purpose: 'collaborator', allowedFields: [], allowedActions: ['discover'], expiresAt: new Date(Date.now() + 3600000).toISOString(), paused: false } });
   Object.values(mocks).forEach(mock => mock.mockReset());

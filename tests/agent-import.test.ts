@@ -199,6 +199,15 @@ describe('owner-reviewed existing ENS identity import', () => {
     expect(agent(owner.id)).toEqual(saved);
   });
 
+  it('commits only one import when two reviewed requests finish authority checks concurrently', async () => {
+    const owner = await signIn(), current = fixture(owner.wallet.address);
+    const input = { ensName, delegate, reviewedDigest: current.state.publicPolicy.digest };
+    const responses = await Promise.all([call('agent/import', input, owner.cookie), call('agent/import', input, owner.cookie)]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(db().prepare('SELECT id FROM agents WHERE user_id=?').all(owner.id)).toHaveLength(1);
+    expect(db().prepare('SELECT id FROM audit WHERE user_id=? AND action=?').all(owner.id, 'agent_import')).toHaveLength(1);
+  });
+
   it.each(['agent/import/preview', 'agent/import'])('denies %s after logout during a genuine verifier check', async endpoint => {
     const owner = await signIn(), current = fixture(owner.wallet.address);
     let resume!: () => void;

@@ -111,7 +111,7 @@ test('persists tour skip for its owner, permits replay and completes guided setu
     await expect(setup.getByRole('link', { name: 'Open ENS agent setup', exact: true })).toBeVisible();
     await setup.getByRole('button', { name: 'See the next step', exact: true }).click();
     await expect(setup.getByRole('link', { name: 'Create your first intent', exact: true })).toBeVisible();
-    await expect(setup).toContainText('World release is paused');
+    await expect(setup).toContainText('World human verification is future scope. Protected introductions remain locked');
     await setup.getByRole('button', { name: 'Finish guide', exact: true }).click();
     const stored = await current(context, baseURL!);
     expect(stored.profile).toMatchObject({ displayName: 'Signed browser owner', seeking: 'A thoughtful collaborator', offering: 'TypeScript and patient design review', publicFields: [], aiConsent: false, contact: '', employer: '' });

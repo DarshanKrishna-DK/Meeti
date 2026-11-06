@@ -108,6 +108,7 @@ async function extract() {
 
 async function evaluate(calibrationOnly = false, useV2Holdout = false) {
   const started = performance.now();
+  const rssBefore = process.memoryUsage().rss;
   const provider = createEmbeddingProviderFromEnv({ ...process.env, EMBEDDING_MAX_REQUESTS: "48" });
   const calibration: { left: string; right: string; positive: boolean; cosine: number }[] = [];
   for (const [left, right, positive] of development) {
@@ -123,7 +124,8 @@ async function evaluate(calibrationOnly = false, useV2Holdout = false) {
       developmentTotal: calibration.length, calibration, usage: provider.usage, model: provider.model,
       format: (await provider.embed([semanticInput(intent(development[0][0]))])).receipt.format,
       modelRevision: (await provider.embed([semanticInput(intent(development[0][0]))])).receipt.modelRevision,
-      heldoutEvaluated: false }, null, 2));
+      heldoutEvaluated: false, memory: { platform: process.platform, rssBefore, rssAfter: process.memoryUsage().rss, maxRssKiB: process.resourceUsage().maxRSS,
+        scope: 'Standalone embedding harness only. This does not establish total hosted API memory.' } }, null, 2));
     return;
   }
   const results = [];
@@ -170,7 +172,9 @@ async function evaluate(calibrationOnly = false, useV2Holdout = false) {
       precision: independentTp + independentFp ? independentTp / (independentTp + independentFp) : null, recall: independentTp / independent.length },
     explicitAliasSubset: { triplets: results.length - independent.length, positiveAccepted: results.filter(value => value.aliasParity && value.positiveAccepted).length },
     latencyMs: { total: performance.now() - started, min: orderedLatency[0], median: orderedLatency[Math.floor(orderedLatency.length / 2)], max: orderedLatency.at(-1) },
-    usage: provider.usage, repeatedInputReceipt: cached.receipt, results }, null, 2));
+    usage: provider.usage, repeatedInputReceipt: cached.receipt,
+    memory: { platform: process.platform, rssBefore, rssAfter: process.memoryUsage().rss, maxRssKiB: process.resourceUsage().maxRSS,
+      scope: 'Standalone embedding harness only. This does not establish total hosted API memory.' }, results }, null, 2));
 }
 
 const mode = process.argv[2];

@@ -15,16 +15,16 @@ const issuer = '0x1111111111111111111111111111111111111111', recipient = '0x2222
 const origin = 'http://127.0.0.1:3198', hash = '0x' + 'ab'.repeat(32);
 let directory: string, operator: UserRow, owner: UserRow, branchReady: boolean, recipientReady: boolean;
 const cookies = new Map<string, string>();
-function fixture(wallet: string): UserRow { const row = { id: randomUUID(), email: randomUUID() + '@fixture.invalid', wallet, password_hash: '', profile: encrypt({}, 'unused'), created_at: new Date().toISOString() }; db().prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run(row.id, row.email, '', wallet, row.profile, row.created_at); cookies.set(row.id, createSession(row.id).split(';')[0]); return row; }
+async function fixture(wallet: string): Promise<UserRow> { const row = { id: randomUUID(), email: randomUUID() + '@fixture.invalid', wallet, password_hash: '', profile: encrypt({}, 'unused'), created_at: new Date().toISOString() }; db().prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run(row.id, row.email, '', wallet, row.profile, row.created_at); cookies.set(row.id, (await createSession(row.id)).split(';')[0]); return row; }
 function request(actor: UserRow, method = 'POST') { return new Request(origin + '/api/namespace', { method, headers: { cookie: cookies.get(actor.id)!, origin, 'content-type': 'application/json' } }); }
 async function call(actor: UserRow, key: string, body?: unknown) { const response = await handleNamespaceClaims(request(actor, body === undefined ? 'GET' : 'POST'), key, actor, body); return (await response!.json()).data; }
 async function claim(label = 'alice') { return (await call(owner, 'namespace/claim', { label, publicNameAndWalletApproved: true })).claim; }
 function unsigned(operation: string, ensName: string, data = '0x1234') { return { chainId: 11155111, from: issuer, to: registry, data, value: '0x0', operation, ensName }; }
-beforeEach(() => {
+beforeEach(async () => {
   closeDatabase(); directory = mkdtempSync(join(tmpdir(), 'meeti-namespace-'));
   vi.stubEnv('DATABASE_PATH', join(directory, 'test.sqlite')); vi.stubEnv('DATA_ENCRYPTION_KEY', randomBytes(32).toString('hex')); vi.stubEnv('APP_ORIGIN', origin);
   vi.stubEnv('ENS_PROJECT_PARENT', 'meeti-demo.eth'); vi.stubEnv('ENS_PROJECT_ISSUER', issuer); vi.stubEnv('ENS_SEPOLIA_RPC_URL', 'https://rpc.fixture.invalid');
-  cookies.clear(); operator = fixture(issuer); owner = fixture(recipient); branchReady = false; recipientReady = false;
+  cookies.clear(); operator = await fixture(issuer); owner = await fixture(recipient); branchReady = false; recipientReady = false;
   Object.values(mocks).forEach(mock => mock.mockReset());
   mocks.inspect.mockImplementation(async ({ parentName, issuer: currentOwner }) => {
     if (parentName === 'users.meeti-demo.eth' && !branchReady) throw new Error('namespace_unregistered_or_expired');
@@ -47,15 +47,15 @@ describe('namespace claims and unsigned issuer execution with chain fixtures', (
   it('requires explicit approval for public name and wallet linkage', async () => { await expect(call(owner, 'namespace/claim', { label: 'alice' })).rejects.toThrow(); expect(db().prepare('SELECT * FROM namespace_claims').all()).toHaveLength(0); });
   it('rejects reserved names before querying chain', async () => { await expect(claim('admin')).rejects.toMatchObject({ code: 'NAME_RESERVED' }); expect(mocks.inspect).not.toHaveBeenCalled(); });
   it('does not reserve an onchain-used label', async () => { branchReady = true; mocks.state.mockResolvedValue({ status: 2, expiry: 123n }); await expect(claim()).rejects.toMatchObject({ code: 'NAME_UNAVAILABLE' }); });
-  it('denies a second wallet the same locally reserved label', async () => { await claim(); const other = fixture('0x4444444444444444444444444444444444444444'); await expect(call(other, 'namespace/claim', { label: 'alice', publicNameAndWalletApproved: true })).rejects.toMatchObject({ code: 'NAME_REQUESTED' }); });
+  it('denies a second wallet the same locally reserved label', async () => { await claim(); const other = await fixture('0x4444444444444444444444444444444444444444'); await expect(call(other, 'namespace/claim', { label: 'alice', publicNameAndWalletApproved: true })).rejects.toMatchObject({ code: 'NAME_REQUESTED' }); });
   it('serializes concurrent claims from two distinct wallet accounts', async () => {
-    const other = fixture('0x4444444444444444444444444444444444444444');
+    const other = await fixture('0x4444444444444444444444444444444444444444');
     const results = await Promise.allSettled([call(owner, 'namespace/claim', { label: 'alice', publicNameAndWalletApproved: true }), call(other, 'namespace/claim', { label: 'alice', publicNameAndWalletApproved: true })]);
     expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
     expect(db().prepare('SELECT id FROM namespace_claims').all()).toHaveLength(1);
   });
-  it('lists other recipient requests only for the authenticated issuer', async () => { await claim(); const other = fixture('0x4444444444444444444444444444444444444444'); expect((await call(other, 'namespace/claims')).requests).toEqual([]); expect((await call(operator, 'namespace/claims')).requests).toHaveLength(1); });
+  it('lists other recipient requests only for the authenticated issuer', async () => { await claim(); const other = await fixture('0x4444444444444444444444444444444444444444'); expect((await call(other, 'namespace/claims')).requests).toEqual([]); expect((await call(operator, 'namespace/claims')).requests).toHaveLength(1); });
   it('prepares only the real missing branch step and makes no signature request', async () => {
     const result = await call(operator, 'namespace/prepare-branch', { maxFeeWei: '500000000000000' });
     expect(result.transaction).toMatchObject({ operation: 'issue-project-subname', ensName: 'users.meeti-demo.eth', from: issuer });

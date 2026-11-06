@@ -33,20 +33,22 @@ import { agent, closeDatabase, db, profile, saveAgent, saveIntent, type Proposal
 import { decrypt, encrypt, hash } from '../packages/server/crypto';
 import { createSession, HttpError } from '../packages/server/security';
 import { requireWorld } from '../packages/server/proposals';
+import { worldStatus } from '../packages/server/world';
 
 const origin = 'http://127.0.0.1:3199';
 let directory: string;
 type Actor = { id: string; cookie: string };
 type StoredChallenge = { binding: WorldBinding; session: WorldSession };
 
-function actor(): Actor {
+async function actor(): Promise<Actor> {
   const id = randomUUID();
   const p: Profile = { displayName: 'Test fixture', headline: 'A public fixture headline', bio: '', seeking: '', offering: '', tags: [],
     contact: `private-${id}`, employer: '', publicFields: ['headline'], aiConsent: true };
   db().prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run(id, `${id}@example.test`, 'not-a-login-fixture', null, encrypt(p, `profile:${id}`), new Date().toISOString());
-  return { id, cookie: createSession(id).split(';')[0] };
+  return { id, cookie: (await createSession(id)).split(';')[0] };
 }
-function pair(left = actor(), right = actor()) {
+async function pair(left?: Actor, right?: Actor) {
+  left ??= await actor(); right ??= await actor();
   function side(owner: Actor) {
     const a: Agent = { id: randomUUID(), ensName: 'test.fixture.eth', owner: `0x${'11'.repeat(20)}`, delegate: `0x${'22'.repeat(20)}`,
       persona: 'Test fixture', authority: null, config: {}, policy: { version: 1, purpose: 'collaborator', allowedFields: ['headline'],
@@ -132,8 +134,21 @@ afterEach(() => {
 });
 
 describe('durable World challenge orchestration with explicit provider fixtures', () => {
+  it('awaits both stored verification results instead of treating promises as verification', async () => {
+    const p = await pair();
+    expect(await worldStatus(p.id, p.left.id)).toMatchObject({ verified: false });
+    const id = randomUUID();
+    db().prepare('INSERT INTO world_verifications VALUES(?,?,?,?,?,?,?,?)').run(id, p.left.id, p.id, p.digest, hash(id), hash(id + ':token'),
+      encrypt({ issuer: 'https://sandbox.auth.world.org', clientId: 'test-only-client', identityMode: 'sandbox-test-identity' }, `world:${id}`), new Date(Date.now() + 60000).toISOString());
+    expect(await worldStatus(p.id, p.left.id)).toMatchObject({ verified: false });
+    vi.stubEnv('WORLD_CAPABILITY_ENABLED', 'false');
+    expect(await worldStatus(p.id, p.left.id)).toMatchObject({ verified: false });
+    expect(fixture.start).not.toHaveBeenCalled();
+    expect(fixture.poll).not.toHaveBeenCalled();
+  });
+
   it('keeps configured World credentials inert while the owner capability is paused', async () => {
-    const p = pair();
+    const p = await pair();
     const id = await challenge(p.left, p.id);
     fixture.start.mockClear(); fixture.poll.mockClear(); fixture.authority.mockClear();
     vi.stubEnv('WORLD_CAPABILITY_ENABLED', 'false');
@@ -145,7 +160,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
       expect(response.status).toBe(503);
       expect((await response.json()).error.code).toBe('WORLD_PAUSED');
     }
-    expect(() => requireWorld(p.id)).toThrow('World verification is paused');
+    await expect(requireWorld(p.id)).rejects.toThrow('World verification is paused');
     expect(fixture.start).not.toHaveBeenCalled();
     expect(fixture.poll).not.toHaveBeenCalled();
     expect(fixture.authority).not.toHaveBeenCalled();
@@ -155,7 +170,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('keeps device codes server-side and binds the encrypted challenge to account, browser, proposal and candidate', async () => {
-    const p = pair();
+    const p = await pair();
     const response = await call(p.left, 'world/challenge', { proposalId: p.id });
     expect(response.status).toBe(200);
     const text = await response.text();
@@ -175,10 +190,10 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('rejects another account, a replacement browser session and extra client binding fields', async () => {
-    const p = pair(), outsider = actor();
+    const p = await pair(), outsider = await actor();
     const id = await challenge(p.left, p.id);
     expect((await call(outsider, 'world/verify', { challengeId: id })).status).toBe(404);
-    const newSession = { id: p.left.id, cookie: createSession(p.left.id).split(';')[0] };
+    const newSession = { id: p.left.id, cookie: (await createSession(p.left.id)).split(';')[0] };
     const mismatch = await call(newSession, 'world/verify', { challengeId: id });
     expect(mismatch.status).toBe(403); expect((await mismatch.json()).error.code).toBe('WORLD_SESSION_MISMATCH');
     expect((await call(p.left, 'world/verify', { challengeId: id, proposalId: randomUUID(), candidateId: outsider.id, verified: true })).status).toBe(400);
@@ -186,14 +201,14 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('invalidates the old challenge when requesting a replacement for the same introduction', async () => {
-    const p = pair(), first = await challenge(p.left, p.id), second = await challenge(p.left, p.id);
+    const p = await pair(), first = await challenge(p.left, p.id), second = await challenge(p.left, p.id);
     expect((await call(p.left, 'world/verify', { challengeId: first })).status).toBe(403);
     expect((await call(p.left, 'world/verify', { challengeId: second })).status).toBe(200);
     expect(fixture.poll).toHaveBeenCalledTimes(1);
   });
 
   it('allows one provider poll at a time and prevents repeating a completed challenge', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
+    const p = await pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
     fixture.poll.mockImplementationOnce(() => { entered.resolve(); return waiting.promise; });
     const first = call(p.left, 'world/verify', { challengeId: id });
     await entered.promise;
@@ -207,7 +222,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('persists a pending poll and enforces its next polling time', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), stored = saved(id);
+    const p = await pair(), id = await challenge(p.left, p.id), stored = saved(id);
     fixture.poll.mockResolvedValueOnce({ status: 'pending', session: { ...stored.session, nextPollAt: Date.now() + 30000 }, pollIntervalSeconds: 30 });
     const pending = await call(p.left, 'world/verify', { challengeId: id });
     expect(pending.status).toBe(200); expect((await pending.json()).data.status).toBe('pending');
@@ -219,7 +234,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('does not accept a provider success after cancellation during an active poll', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
+    const p = await pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
     fixture.poll.mockImplementationOnce(() => { entered.resolve(); return waiting.promise; });
     const pending = call(p.left, 'world/verify', { challengeId: id });
     await entered.promise;
@@ -231,7 +246,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('does not store verification when the requesting session logs out during a provider poll', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
+    const p = await pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
     fixture.poll.mockImplementationOnce(() => { entered.resolve(); return waiting.promise; });
     const pending = call(p.left, 'world/verify', { challengeId: id });
     await entered.promise;
@@ -246,14 +261,14 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('rejects an expired challenge before calling the provider', async () => {
-    const p = pair(), id = await challenge(p.left, p.id);
+    const p = await pair(), id = await challenge(p.left, p.id);
     db().prepare('UPDATE challenges SET expires_at=? WHERE id=?').run(new Date(Date.now() - 1000).toISOString(), id);
     expect((await call(p.left, 'world/verify', { challengeId: id })).status).toBe(403);
     expect(fixture.poll).not.toHaveBeenCalled();
   });
 
   it('rejects a success that arrives after the bound challenge expires', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), stored = saved(id);
+    const p = await pair(), id = await challenge(p.left, p.id), stored = saved(id);
     stored.binding.expiresAt = Date.now() + 500;
     stored.session.binding = stored.binding;
     db().prepare('UPDATE challenges SET data=? WHERE id=?').run(encrypt(stored, `challenge:${id}`), id);
@@ -268,7 +283,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it.each(['tokenDigest', 'tokenId'] as const)('rejects durable replay by %s even when the other token field changes', async field => {
-    const p = pair(), reused = verification({ userId: p.left.id, issuedAt: Date.now(), expiresAt: Date.now() + 300000 } as WorldBinding);
+    const p = await pair(), reused = verification({ userId: p.left.id, issuedAt: Date.now(), expiresAt: Date.now() + 300000 } as WorldBinding);
     fixture.poll.mockImplementationOnce(async () => ({ status: 'verified', verification: reused }));
     await verify(p.left, p.id);
     closeDatabase();
@@ -281,17 +296,17 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('does not allow one issuer subject to represent two application accounts', async () => {
-    const p = pair();
+    const p = await pair();
     fixture.poll.mockImplementation(async (_session: WorldSession, binding: WorldBinding) => ({ status: 'verified', verification: verification(binding, { subject: 'the-same-test-human' }) }));
     await verify(p.left, p.id);
     const id = await challenge(p.right, p.id);
     const conflict = await call(p.right, 'world/verify', { challengeId: id });
     expect(conflict.status).toBe(403); expect((await conflict.json()).error.code).toBe('WORLD_IDENTITY_CONFLICT');
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
   });
 
   it('does not allow one account to switch to a second World subject', async () => {
-    const p = pair(); await verify(p.left, p.id);
+    const p = await pair(); await verify(p.left, p.id);
     const id = await challenge(p.left, p.id);
     fixture.poll.mockImplementationOnce(async (_session: WorldSession, binding: WorldBinding) => ({ status: 'verified', verification: verification(binding, { subject: 'another-test-human' }) }));
     const response = await call(p.left, 'world/verify', { challengeId: id });
@@ -299,14 +314,14 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('requires both current verifications and creates one room under concurrent opens', async () => {
-    const p = pair();
-    expect(() => requireWorld(p.id)).toThrow();
+    const p = await pair();
+    await expect(requireWorld(p.id)).rejects.toThrow();
     await verify(p.left, p.id);
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
     await verify(p.right, p.id);
-    expect(() => requireWorld(p.id)).not.toThrow();
+    await expect(requireWorld(p.id)).resolves.toBeUndefined();
     closeDatabase();
-    expect(() => requireWorld(p.id)).not.toThrow();
+    await expect(requireWorld(p.id)).resolves.toBeUndefined();
     const responses = await Promise.all([call(p.left, `proposals/${p.id}/open`, {}), call(p.right, `proposals/${p.id}/open`, {})]);
     expect(responses.map(x => x.status)).toEqual([200, 200]);
     const ids = await Promise.all(responses.map(async x => (await x.json()).data.id));
@@ -320,27 +335,27 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('denies room release after proof expiry or proposal digest changes', async () => {
-    const p = pair(); await verify(p.left, p.id); await verify(p.right, p.id);
+    const p = await pair(); await verify(p.left, p.id); await verify(p.right, p.id);
     db().prepare('UPDATE world_verifications SET expires_at=? WHERE user_id=?').run(new Date(0).toISOString(), p.right.id);
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
     db().prepare('UPDATE world_verifications SET expires_at=?').run(new Date(Date.now() + 60000).toISOString());
     db().prepare('UPDATE proposals SET digest=? WHERE id=?').run(hash('new-proposal'), p.id);
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
     expect((await call(p.left, `proposals/${p.id}/open`, {})).status).toBe(403);
   });
 
   it('does not reuse sandbox verification after changing the configured issuer or client', async () => {
-    const p = pair(); await verify(p.left, p.id); await verify(p.right, p.id);
-    expect(() => requireWorld(p.id)).not.toThrow();
+    const p = await pair(); await verify(p.left, p.id); await verify(p.right, p.id);
+    await expect(requireWorld(p.id)).resolves.toBeUndefined();
     vi.stubEnv('WORLD_ISSUER', 'https://auth.world.org');
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
     vi.stubEnv('WORLD_ISSUER', 'https://sandbox.auth.world.org');
     vi.stubEnv('WORLD_CLIENT_ID', 'a-different-test-client');
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
   });
 
   it('closes the challenge when the provider fails and never creates a verification', async () => {
-    const p = pair(), id = await challenge(p.left, p.id);
+    const p = await pair(), id = await challenge(p.left, p.id);
     fixture.poll.mockRejectedValueOnce(new Error('Explicit test-only provider outage.'));
     expect((await call(p.left, 'world/verify', { challengeId: id })).status).toBe(503);
     expect((await call(p.left, 'world/verify', { challengeId: id })).status).toBe(403);
@@ -348,7 +363,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('rechecks live authority after the introduction model finishes', async () => {
-    const p = pair(); await verify(p.left, p.id); await verify(p.right, p.id);
+    const p = await pair(); await verify(p.left, p.id); await verify(p.right, p.id);
     fixture.introduction.mockImplementationOnce(async () => {
       fixture.revoked.add(p.right.id);
       return { output: { opening: 'Blocked test-only introduction.', suggestedFirstQuestion: 'A fixture question?' } };
@@ -358,7 +373,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('does not create a room when the requesting session logs out during model generation', async () => {
-    const p = pair(); await verify(p.left, p.id); await verify(p.right, p.id);
+    const p = await pair(); await verify(p.left, p.id); await verify(p.right, p.id);
     const waiting = deferred<{ output: { opening: string; suggestedFirstQuestion: string } }>(), entered = deferred<void>();
     fixture.introduction.mockImplementationOnce(() => { entered.resolve(); return waiting.promise; });
     const pending = call(p.left, `proposals/${p.id}/open`, {});
@@ -373,7 +388,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('denies provider success when current authority is revoked during the poll', async () => {
-    const p = pair(), id = await challenge(p.left, p.id);
+    const p = await pair(), id = await challenge(p.left, p.id);
     fixture.poll.mockImplementationOnce(async (_session: WorldSession, binding: WorldBinding) => {
       fixture.revoked.add(p.right.id);
       return { status: 'verified', verification: verification(binding) };
@@ -384,7 +399,7 @@ describe('durable World challenge orchestration with explicit provider fixtures'
   });
 
   it('invalidates a running verification when consent is revoked', async () => {
-    const p = pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
+    const p = await pair(), id = await challenge(p.left, p.id), waiting = deferred<WorldPollResult>(), entered = deferred<void>();
     fixture.poll.mockImplementationOnce(() => { entered.resolve(); return waiting.promise; });
     const response = call(p.left, 'world/verify', { challengeId: id });
     await entered.promise;
@@ -392,6 +407,6 @@ describe('durable World challenge orchestration with explicit provider fixtures'
     waiting.resolve({ status: 'verified', verification: verification(saved(id).binding) });
     expect((await response).status).toBeGreaterThanOrEqual(400);
     expect(db().prepare('SELECT count(*) AS n FROM world_verifications').get()).toEqual({ n: 0 });
-    expect(() => requireWorld(p.id)).toThrow();
+    await expect(requireWorld(p.id)).rejects.toThrow();
   });
 });

@@ -6,7 +6,7 @@ import { createEnsAuthorityProvider, normalizeProjectLabel } from '../ens';
 import { createAgentIdentityProvider, type PreparedIdentityTransaction } from '../ens/agent-identity';
 import { AGENT_CONTEXT_KEY, MEETI_AGENT_PROTOCOL, agentEndpointKey, agentRegistryIdentitySchema, publicAgentContextSchema, registryReference, type AgentRegistryIdentity, type PublicAgentContext } from '../ens/agent-records';
 import { createEnsReadTransport } from '../ens/rpc-transport';
-import { agent, atomic, audit, db, type UserRow } from './db';
+import { agent, atomic, audit, db, type UserRow } from './store';
 import { decrypt, encrypt } from './crypto';
 import { checkOrigin, HttpError, rateLimit, requireUser, requireValue } from './security';
 import { handleNamespaceClaims } from './namespace-claims';
@@ -15,11 +15,11 @@ type Stored = { ensName?: string; identity?: AgentRegistryIdentity; context?: Pu
 type Transaction = { chainId: number; from: string; to: string; data: Hex; value: string; operation: string; ensName: string; gas?: string; gasPrice?: string; key?: string; publicValue?: string };
 type Pending = { transaction: Transaction; identityPrepared?: PreparedIdentityTransaction; expiresAt: string; maxFeeWei: string; submittedHash?: Hex; context?: PublicAgentContext; identity?: AgentRegistryIdentity };
 function ok(value: unknown) { return Response.json({ data: value }, { headers: { 'Cache-Control': 'no-store' } }); }
-function read(userId: string): Stored {
-  const row = db().prepare('SELECT data FROM agent_registrations WHERE user_id=?').get(userId) as { data: string } | undefined;
+async function read(userId: string): Promise<Stored> {
+  const row = await db().prepare('SELECT data FROM agent_registrations WHERE user_id=?').get(userId) as { data: string } | undefined;
   return row ? decrypt<Stored>(row.data, `agent-registration:${userId}`) : { receipts: [] };
 }
-function save(userId: string, value: Stored) { db().prepare('INSERT INTO agent_registrations VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at').run(userId, encrypt(value, `agent-registration:${userId}`), new Date().toISOString()); }
+async function save(userId: string, value: Stored) { await db().prepare('INSERT INTO agent_registrations VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at').run(userId, encrypt(value, `agent-registration:${userId}`), new Date().toISOString()); }
 function connections() {
   const rpcUrl = process.env.ENS_SEPOLIA_AUTH_RPC_URL || process.env.ENS_SEPOLIA_RPC_URL;
   if (!rpcUrl) throw new HttpError(503, 'ENS_UNCONFIGURED', 'Configure the Sepolia connection before managing identity.');
@@ -84,15 +84,15 @@ export async function resolveCurrentPublicAgentIdentity(input: { ensName: string
 
 /** An already published context or stored registry tuple cannot silently become optional after removal. */
 export async function resolveCurrentPublicAgentIdentityForUser(userId: string): Promise<CurrentPublicAgentIdentity> {
-  const current = requireValue(agent(userId), 'Configure or recover your ENS agent first.', 409), stored = read(userId);
+  const current = requireValue(await agent(userId), 'Configure or recover your ENS agent first.', 409), stored = await read(userId);
   return resolveCurrentPublicAgentIdentity({ ensName: current.ensName, owner: current.owner, identity: stored.identity, requireContext: Boolean(stored.context) });
 }
-function pending(userId: string, id: string) {
-  const row = requireValue(db().prepare("SELECT * FROM operations WHERE id=? AND user_id=? AND kind='identity'").get(id, userId) as { id: string; data: string; state: string } | undefined, 'Identity operation was not found.', 404);
+async function pending(userId: string, id: string) {
+  const row = requireValue(await db().prepare("SELECT * FROM operations WHERE id=? AND user_id=? AND kind='identity'").get(id, userId) as { id: string; data: string; state: string } | undefined, 'Identity operation was not found.', 404);
   return { row, value: decrypt<Pending>(row.data, `operation:${id}`) };
 }
-function requireActor(request: Request, expected: UserRow) {
-  const current = requireUser(request);
+async function requireActor(request: Request, expected: UserRow) {
+  const current = await requireUser(request);
   if (current.id !== expected.id || current.wallet?.toLowerCase() !== expected.wallet?.toLowerCase()) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Reconnect the original owner account before continuing.');
 }
 async function storePrepared(request: Request, actor: UserRow, transaction: Transaction, input: Omit<Pending, 'transaction' | 'expiresAt'>, client: ReturnType<typeof connections>['client']) {
@@ -100,12 +100,12 @@ async function storePrepared(request: Request, actor: UserRow, transaction: Tran
   const [estimate, price] = await Promise.all([client.estimateGas({ account: getAddress(transaction.from), to: getAddress(transaction.to), data: transaction.data, value: 0n }), client.getGasPrice()]);
   const gas = estimate * 120n / 100n, gasPrice = price * 120n / 100n;
   if (gas * gasPrice > BigInt(input.maxFeeWei)) throw new HttpError(409, 'FEE_CAP_EXCEEDED', 'The estimated Sepolia fee exceeds your reviewed limit.');
-  return atomic(() => {
-    requireActor(request, actor);
-    if (db().prepare("SELECT id FROM operations WHERE user_id=? AND state IN ('prepared','submitted')").get(actor.id)) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile your existing transaction first.');
+  return await atomic(async () => {
+    await requireActor(request, actor);
+    if (await db().prepare("SELECT id FROM operations WHERE user_id=? AND state IN ('prepared','submitted')").get(actor.id)) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile your existing transaction first.');
     const id = randomUUID(), expiresAt = new Date(Date.now() + 10 * 60000).toISOString();
     const value: Pending = { ...input, transaction: { ...transaction, gas: `0x${gas.toString(16)}`, gasPrice: `0x${gasPrice.toString(16)}` }, expiresAt };
-    db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(id, actor.id, 'identity', 'prepared', encrypt(value, `operation:${id}`), new Date().toISOString());
+    await db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(id, actor.id, 'identity', 'prepared', encrypt(value, `operation:${id}`), new Date().toISOString());
     return { operationId: id, ...value };
   });
 }
@@ -122,12 +122,12 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
   const c = connections();
   try {
     if (request.method === 'GET' && key === 'identity') {
-      const stored = read(actor.id), current = agent(actor.id);
+      const stored = await read(actor.id), current = await agent(actor.id);
       const association = stored.identity && current ? await c.identity.verifyAssociation({ identity: stored.identity, ensName: current.ensName, owner: actor.wallet }) : { verified: false, reason: 'registration_not_confirmed' };
       return ok({ ...stored, association, deployment: await c.identity.inspectDeployment(), canPublishEndpoint: (() => { try { approvedAgentOrigin(); return true; } catch { return false; } })() });
     }
     if (request.method !== 'POST') return null;
-    checkOrigin(request); rateLimit(`identity:${actor.id}`, 15);
+    checkOrigin(request); await rateLimit(`identity:${actor.id}`, 15);
     if (key === 'namespace/inspect') {
       const input = z.object({ label: z.string().max(63).optional() }).strict().parse(body);
       const parentName = process.env.ENS_PROJECT_PARENT || 'meeti-demo.eth';
@@ -140,13 +140,13 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
         if (['admin', 'agent', 'networking', 'users', 'support', 'api', 'www'].includes(label)) throw new HttpError(400, 'NAME_RESERVED', 'Choose another user name.');
         namespace = { label, userName: `${label}.users.${parentName}`, agentName: `networking.${label}.users.${parentName}`, recipient: actor.wallet };
       }
-      requireActor(request, actor);
+      await requireActor(request, actor);
       return ok({ parent, namespace, sponsorshipEnabled: false, retainedPowers: parent.parentControl, nextStep: 'The issuer must separately prepare and authorize the dedicated users branch before recipient issuance.' });
     }
-    const current = requireValue(agent(actor.id), 'Configure or recover your ENS agent first.', 409);
+    const current = requireValue(await agent(actor.id), 'Configure or recover your ENS agent first.', 409);
     if (current.owner.toLowerCase() !== actor.wallet.toLowerCase()) throw new HttpError(403, 'OWNER_MISMATCH', 'The authenticated wallet does not own this agent.');
     if (key === 'identity/prepare') {
-      const input = prepareSchema.parse(body), stored = read(actor.id);
+      const input = prepareSchema.parse(body), stored = await read(actor.id);
       let transaction: Transaction, identityPrepared: PreparedIdentityTransaction | undefined, context = stored.context;
       if (input.operation === 'register-identity') {
         if (stored.identity) throw new HttpError(409, 'IDENTITY_EXISTS', 'Use the confirmed identity rather than registering another.');
@@ -181,14 +181,14 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
     }
     if (key === 'identity/submitted' || key === 'identity/confirm') {
       const input = z.object({ operationId: z.string().uuid(), hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).strict().parse(body);
-      const { row, value } = pending(actor.id, input.operationId);
+      const { row, value } = await pending(actor.id, input.operationId);
       if (!['prepared', 'submitted', 'confirmed'].includes(row.state) || value.transaction.ensName !== current.ensName || value.transaction.from.toLowerCase() !== actor.wallet.toLowerCase()) throw new HttpError(409, 'OPERATION_CHANGED', 'This operation belongs to a different identity state.');
       if (value.submittedHash && value.submittedHash.toLowerCase() !== input.hash.toLowerCase()) throw new HttpError(409, 'TRANSACTION_MISMATCH', 'Reconcile the recorded transaction hash.');
       if (key.endsWith('/submitted')) {
-        requireActor(request, actor);
+        await requireActor(request, actor);
         if (row.state === 'confirmed') return ok({ confirmed: true });
         if (!value.submittedHash && Date.parse(value.expiresAt) <= Date.now()) throw new HttpError(409, 'PREPARATION_EXPIRED', 'Prepare a fresh review before submitting.');
-        db().prepare('UPDATE operations SET state=?,data=? WHERE id=?').run('submitted', encrypt({ ...value, submittedHash: input.hash }, `operation:${row.id}`), row.id);
+        await db().prepare('UPDATE operations SET state=?,data=? WHERE id=?').run('submitted', encrypt({ ...value, submittedHash: input.hash }, `operation:${row.id}`), row.id);
         return ok({ submitted: true, confirmed: false });
       }
       const result = value.identityPrepared ? await c.identity.confirmTransaction({ hash: input.hash as Hex, prepared: value.identityPrepared })
@@ -204,15 +204,15 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
         }
       }
       if (value.identityPrepared?.operation === 'set-identity-uri') await c.identity.prepareAssociationRecord({ identity: requireValue(value.identity, 'Identity tuple was not found.'), ensName: current.ensName, owner: actor.wallet });
-      return atomic(() => {
-        requireActor(request, actor);
-        const currentAgent = agent(actor.id);
+      return await atomic(async () => {
+        await requireActor(request, actor);
+        const currentAgent = await agent(actor.id);
         if (!currentAgent || currentAgent.ensName !== value.transaction.ensName || currentAgent.owner.toLowerCase() !== actor.wallet!.toLowerCase()) throw new HttpError(409, 'AGENT_CHANGED', 'The owner agent changed during transaction confirmation.');
-        const stored = read(actor.id);
+        const stored = await read(actor.id);
         const identity = 'identity' in result && result.identity ? result.identity : value.identity || stored.identity;
-        save(actor.id, { ...stored, ensName: current.ensName, identity, ...(value.context ? { context: value.context } : {}), receipts: [...stored.receipts.filter(item => item.hash !== input.hash), { operation: value.transaction.operation, hash: input.hash, blockNumber: result.blockNumber }].slice(-30) });
-        db().prepare('UPDATE operations SET state=?,data=? WHERE id=?').run('confirmed', encrypt({ ...value, submittedHash: input.hash }, `operation:${row.id}`), row.id);
-        audit(actor.id, 'identity_transaction', 'confirmed', input.hash);
+        await save(actor.id, { ...stored, ensName: current.ensName, identity, ...(value.context ? { context: value.context } : {}), receipts: [...stored.receipts.filter(item => item.hash !== input.hash), { operation: value.transaction.operation, hash: input.hash, blockNumber: result.blockNumber }].slice(-30) });
+        await db().prepare('UPDATE operations SET state=?,data=? WHERE id=?').run('confirmed', encrypt({ ...value, submittedHash: input.hash }, `operation:${row.id}`), row.id);
+        await audit(actor.id, 'identity_transaction', 'confirmed', input.hash);
         return ok(result);
       });
     }
@@ -222,11 +222,11 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
 
 /** Only the exact currently resolved owner-approved public card is served, never a private profile. */
 export async function publicAgentResponse(ensName: string, kind: 'context' | 'registration'): Promise<Response> {
-  rateLimit('public-agent:' + ensName, 20);
-  const rows = db().prepare('SELECT user_id,data FROM agent_registrations').all() as { user_id: string; data: string }[];
+  await rateLimit('public-agent:' + ensName, 20);
+  const rows = await db().prepare('SELECT user_id,data FROM agent_registrations').all() as { user_id: string; data: string }[];
   const match = rows.map(row => ({ userId: row.user_id, value: decrypt<Stored>(row.data, `agent-registration:${row.user_id}`) })).find(row => row.value.ensName === ensName);
   if (!match?.value.context) throw new HttpError(404, 'NOT_FOUND', 'Public agent context was not found.');
-  const current = requireValue(agent(match.userId), 'Public agent was not found.', 404);
+  const current = requireValue(await agent(match.userId), 'Public agent was not found.', 404);
   const resolved = await resolveCurrentPublicAgentIdentity({ ensName, owner: current.owner, identity: match.value.identity, requireContext: true });
   if (resolved.context.state !== 'valid' || JSON.stringify(resolved.context.value) !== JSON.stringify(match.value.context)) throw new HttpError(409, 'PUBLIC_RECORD_CHANGED', 'Current ENS public records do not agree with this service.');
   if (kind === 'context') return Response.json({ ...resolved.context.value, protocol: MEETI_AGENT_PROTOCOL, protocolVersion: '1', supportedMethods: ['GET context', 'GET registration'], registrationAssociationState: resolved.association.state, checkedAt: resolved.observed.checkedAt }, { headers: { 'Cache-Control': 'no-store' } });

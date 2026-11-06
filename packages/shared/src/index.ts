@@ -45,6 +45,7 @@ export type OnboardingState = { profileComplete: boolean; tourCompleted: boolean
 export type AppState = {
   user: { id: string; email: string; wallet: string | null }; profile: Profile; agent: Agent | null;
   intents: Intent[]; proposals: Proposal[]; rooms: Room[]; audit: Audit[]; agentRuns?: AgentRun[];
+  agentTasks?: { taskId: string; kind: 'propose' | 'resume' | 'retry'; status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'expired'; updatedAt: string; error?: { code: string; message: string } }[];
   integrations: Record<'ens' | 'arkiv' | 'ai' | 'world', IntegrationStatus>;
 };
 export type Candidate = { key: string; intentId: string; ensAgentRef: string; goal: Goal; summary: string; tags: string[]; expiresAt: string; owner: string; version: number; policyVersion: number; demoOrigin: boolean; match?: RankedCandidate };

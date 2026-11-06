@@ -36,14 +36,14 @@ async function main() {
   const started = performance.now();
   let stage: 'load_record' | 'current_public_identity_verification' | 'record_unchanged_check' = 'load_record';
   try {
-    const stored = qualificationRecord(qualificationId);
+    const stored = await qualificationRecord(qualificationId);
     requireValue(stored?.row.id === qualificationId && stored.value.publicIdentities && stored.row.left_user !== stored.row.right_user, 'existing_two_owner_qualification_bindings_required');
     requireValue([stored.value.publicIdentities.left, stored.value.publicIdentities.right].every(value => value.context === 'valid' && value.association === 'verified'), 'expected_demo_associations_not_recorded');
     stage = 'current_public_identity_verification';
     const result = await assertCurrentPublicIdentityBindings(stored.row.left_user, stored.row.right_user, stored.value.publicIdentities);
     requireValue([result.left, result.right].every(value => value.context === 'valid' && value.association === 'verified' && /^[a-f0-9]{64}$/.test(value.digest)), 'both_current_associations_not_verified');
     stage = 'record_unchanged_check';
-    const after = qualificationRecord(qualificationId);
+    const after = await qualificationRecord(qualificationId);
     requireValue(after && after.row.version === stored.row.version && after.row.state === stored.row.state && after.row.data === stored.row.data, 'qualification_record_changed_during_read_check');
     const report = { checkedAt: new Date().toISOString(), qualificationId, outcome: 'current_public_identity_bindings_verified',
       bindings: { left: { context: result.left.context, association: result.left.association, digest: result.left.digest }, right: { context: result.right.context, association: result.right.association, digest: result.right.digest } },

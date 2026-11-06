@@ -3,7 +3,7 @@ import { getAddress, verifyMessage, type Address, type Hex } from 'viem';
 import { createSiweMessage } from 'viem/siwe';
 import { z } from 'zod';
 import type { Profile } from '../shared/src';
-import { atomic, audit, db } from './db';
+import { atomic, audit, db } from './store';
 import { encrypt, hash, hashPassword } from './crypto';
 import { checkOrigin, createSession, HttpError, rateLimit } from './security';
 
@@ -50,8 +50,8 @@ export async function handleWalletAuth(request: Request, key: string, body: unkn
     let address: Address;
     try { address = getAddress(input.address); }
     catch { throw new HttpError(400, 'INVALID_WALLET', 'Choose a valid Ethereum wallet address.'); }
-    rateLimit('wallet-auth:challenge:global', 60);
-    rateLimit(`wallet-auth:challenge:${address.toLowerCase()}`, 10);
+    await rateLimit('wallet-auth:challenge:global', 60);
+    await rateLimit(`wallet-auth:challenge:${address.toLowerCase()}`, 10);
     const id = randomUUID(), flow = randomBytes(32).toString('hex');
     const issuedAt = new Date(), expirationTime = new Date(issuedAt.getTime() + 300000);
     const message = createSiweMessage({
@@ -59,14 +59,14 @@ export async function handleWalletAuth(request: Request, key: string, body: unkn
       version: '1', nonce: randomBytes(32).toString('hex'), issuedAt, expirationTime, requestId: id,
       statement: 'Sign in to Meeti. This signature does not authorize transactions or public disclosure.',
     });
-    db().prepare('DELETE FROM wallet_auth_challenges WHERE expires_at<=?').run(issuedAt.toISOString());
-    db().prepare('INSERT INTO wallet_auth_challenges(id,address,chain_id,origin,message,flow_hash,expires_at) VALUES(?,?,?,?,?,?,?)')
+    await db().prepare('DELETE FROM wallet_auth_challenges WHERE expires_at<=?').run(issuedAt.toISOString());
+    await db().prepare('INSERT INTO wallet_auth_challenges(id,address,chain_id,origin,message,flow_hash,expires_at) VALUES(?,?,?,?,?,?,?)')
       .run(id, address.toLowerCase(), input.chainId, origin, message, hash(flow), expirationTime.toISOString());
     return response({ id, message, address, chainId: input.chainId, expiresAt: expirationTime.toISOString() }, [flowCookie(flow, 300)]);
   }
   const input = verificationSchema.parse(body);
-  rateLimit('wallet-auth:verify:global', 120);
-  const row = db().prepare('SELECT * FROM wallet_auth_challenges WHERE id=?').get(input.id) as ChallengeRow | undefined;
+  await rateLimit('wallet-auth:verify:global', 120);
+  const row = await db().prepare('SELECT * FROM wallet_auth_challenges WHERE id=?').get(input.id) as ChallengeRow | undefined;
   if (!row || row.used || Date.parse(row.expires_at) <= Date.now() || row.origin !== origin) {
     throw new HttpError(403, 'CHALLENGE_EXPIRED', 'This wallet sign-in challenge is expired or already used.');
   }
@@ -78,21 +78,21 @@ export async function handleWalletAuth(request: Request, key: string, body: unkn
   try { valid = await verifyMessage({ address: row.address, message: row.message, signature: input.signature as Hex }); }
   catch { /* Invalid wallet signatures always deny access. */ }
   if (!valid) throw new HttpError(403, 'INVALID_SIGNATURE', 'Wallet ownership could not be verified.');
-  const account = atomic(() => {
-    const changed = db().prepare('UPDATE wallet_auth_challenges SET used=1 WHERE id=? AND used=0 AND expires_at>? AND origin=?')
+  const account = await atomic(async () => {
+    const changed = await db().prepare('UPDATE wallet_auth_challenges SET used=1 WHERE id=? AND used=0 AND expires_at>? AND origin=?')
       .run(row.id, new Date().toISOString(), origin);
     if (changed.changes !== 1) throw new HttpError(403, 'REPLAY_DENIED', 'This wallet sign-in challenge is expired or already used.');
-    let actor = db().prepare('SELECT id FROM users WHERE lower(wallet)=?').get(row.address.toLowerCase()) as { id: string } | undefined;
+    let actor = await db().prepare('SELECT id FROM users WHERE lower(wallet)=?').get(row.address.toLowerCase()) as { id: string } | undefined;
     if (!actor) {
       actor = { id: randomUUID() };
       // A reserved internal identifier preserves the existing non-null email schema.
       const internalEmail = `${actor.id}@wallet.meeti.invalid`;
-      db().prepare('INSERT INTO users(id,email,password_hash,wallet,profile,created_at) VALUES(?,?,?,?,?,?)')
+      await db().prepare('INSERT INTO users(id,email,password_hash,wallet,profile,created_at) VALUES(?,?,?,?,?,?)')
         .run(actor.id, internalEmail, hashPassword(randomBytes(48).toString('hex')), row.address.toLowerCase(), encrypt(blankProfile(), `profile:${actor.id}`), new Date().toISOString());
-      audit(actor.id, 'account', 'created', 'Wallet account created with empty private profile defaults.');
+      await audit(actor.id, 'account', 'created', 'Wallet account created with empty private profile defaults.');
     }
-    audit(actor.id, 'session', 'created', 'Signed in with verified wallet ownership.');
-    return { id: actor.id, cookie: createSession(actor.id) };
+    await audit(actor.id, 'session', 'created', 'Signed in with verified wallet ownership.');
+    return { id: actor.id, cookie: await createSession(actor.id) };
   });
   return response({ id: account.id, wallet: row.address, chainId: row.chain_id }, [account.cookie, flowCookie('', 0)]);
 }

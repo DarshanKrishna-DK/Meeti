@@ -1,0 +1,102 @@
+# Prepared configuration. No service has been created by adding this file.
+# Free compute only. Do not add disks, paid workers, upgrades or paid databases.
+# Render can bill overages if a payment method exists. Verify account spending controls first.
+# Official limitations: https://render.com/docs/free
+# Free Render sleeps after 15 idle minutes. Discovery is best effort while the process is awake.
+# Supabase Postgres stores account state durably. No local SQLite fallback is allowed here.
+# The 512 MB instance has not been load-tested. It does not host Ollama.
+# The pinned CPU embedding assets are baked into the Docker image after hash verification.
+# One Node process serves the API and schedules bounded discovery work.
+services:
+  - type: web
+    name: meeti-core
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: "off"
+    numInstances: 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: SUPABASE_DATABASE_CA
+        sync: false
+      - key: WORLD_CAPABILITY_ENABLED
+        value: "false"
+      - key: AGENT_TASK_QUEUE_ENABLED
+        value: "true"
+      # Use the final Vercel frontend HTTPS origin if same-origin API proxying is enabled.
+      - key: APP_ORIGIN
+        sync: false
+      # Retain the original key only when an explicitly authorized database is migrated.
+      # No database or signing vault is copied into this image.
+      - key: DATA_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_ENABLED
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ENS_SEPOLIA_RPC_URL
+        sync: false
+      - key: ENS_SEPOLIA_AUTH_RPC_URL
+        sync: false
+      - key: ENS_PROJECT_PARENT
+        value: meeti-demo.eth
+      - key: ENS_PROJECT_ISSUER
+        sync: false
+      - key: ARKIV_RPC_URL
+        value: https://rpc.rabdi.db-chain.testnet.arkiv.network
+      - key: ARKIV_ACCESS_KEY
+        sync: false
+      - key: AI_BASE_URL
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_MODEL
+        sync: false
+      - key: AI_INPUT_USD_PER_MILLION
+        sync: false
+      - key: AI_OUTPUT_USD_PER_MILLION
+        sync: false
+      - key: AI_MAX_COST_USD
+        sync: false
+      - key: AI_MAX_REQUESTS
+        sync: false
+      - key: AI_MAX_INPUT_BYTES
+        sync: false
+      - key: AI_MAX_OUTPUT_TOKENS
+        sync: false
+      - key: AI_GLOBAL_BUDGET_ID
+        sync: false
+      - key: AI_RESPONSE_FORMAT
+        sync: false
+      - key: EMBEDDING_PROTOCOL
+        value: onnx
+      - key: EMBEDDING_MODEL
+        value: Xenova/all-MiniLM-L6-v2
+      - key: EMBEDDING_MODEL_REVISION
+        value: 751bff37182d3f1213fa05d7196b954e230abad9:q8:mean-l2:max256:tjs4.3.2
+      - key: EMBEDDING_DIMENSIONS
+        value: "384"
+      - key: EMBEDDING_INPUT_USD_PER_MILLION
+        value: "0"
+      - key: EMBEDDING_MAX_COST_USD
+        value: "0"
+      - key: EMBEDDING_ONNX_DIRECTORY
+        value: .models/meeti-minilm-q8
+      - key: MATCHING_MIN_COSINE
+        sync: false
+      - key: MATCHING_CALIBRATED_REVISION
+        sync: false
+      - key: MATCHING_CALIBRATED_FORMAT
+        sync: false

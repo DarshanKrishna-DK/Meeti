@@ -1,6 +1,6 @@
 import { keccak256, stringToHex } from 'viem';
 import type { Action, Agent, Intent, Policy } from '../shared/src';
-import { agent, audit, profile, saveAgent } from './db';
+import { agent, atomic, audit, profile, saveAgent } from './store';
 import { HttpError } from './security';
 import { createEnsAuthorityProvider } from '../ens';
 import { createArkivAdapter, type PublicIntent } from '../arkiv/src';
@@ -8,6 +8,7 @@ import { createProviderFromEnv, MeetiAgentService, type AgentParticipant } from 
 import { IntentSemanticsSchema } from '../matching/src/semantics';
 import { approvedContextFields, contextFieldAllowed } from './context-policy';
 import { qualificationAnswerAllowed } from './qualification-context';
+import { durableInferenceProvider } from './inference-budget';
 
 export function policyDigest(policy: Policy): `0x${string}` {
   return keccak256(stringToHex(JSON.stringify({ version: policy.version, purpose: policy.purpose,
@@ -22,7 +23,7 @@ export function ensProvider(value: Agent) {
   } });
 }
 export async function authority(userId: string, action: Action, expectedPolicy?: number) {
-  const value = agent(userId);
+  const value = await agent(userId);
   if (!value) throw new HttpError(409, 'AGENT_REQUIRED', 'Set up your agent before continuing.');
   if (value.policy.paused) throw new HttpError(403, 'AGENT_PAUSED', 'Your agent is paused.');
   if (Date.parse(value.policy.expiresAt) <= Date.now()) throw new HttpError(403, 'POLICY_EXPIRED', 'Your agent permissions have expired.');
@@ -30,12 +31,17 @@ export async function authority(userId: string, action: Action, expectedPolicy?:
   if (expectedPolicy && value.policy.version !== expectedPolicy) throw new HttpError(409, 'POLICY_CHANGED', 'The permission policy has changed. Review this action again.');
   const result = await ensProvider(value).checkAuthority({ ensName: value.ensName, owner: value.owner as `0x${string}`,
     delegate: value.delegate as `0x${string}`, action, policyVersion: String(value.policy.version) });
-  const current = agent(userId);
-  if (!current || policyDigest(current.policy) !== policyDigest(value.policy)) throw new HttpError(409, 'POLICY_CHANGED', 'The permission policy changed during verification.');
   const receipt = { allowed: result.allowed, reason: result.reason, checkedAt: new Date().toISOString(), evidence: result };
-  saveAgent(userId, { ...current, authority: receipt });
+  await atomic(async () => {
+    const current = await agent(userId);
+    if (!current || current.ensName !== value.ensName || current.owner !== value.owner || current.delegate !== value.delegate
+      || current.config.resolverAddress !== value.config.resolverAddress || policyDigest(current.policy) !== policyDigest(value.policy)) {
+      throw new HttpError(409, 'POLICY_CHANGED', 'The permission policy changed during verification.');
+    }
+    await saveAgent(userId, { ...current, authority: receipt });
+  });
   if (!result.allowed) {
-    audit(userId, action, 'denied', result.reason);
+    await audit(userId, action, 'denied', result.reason);
     if (['ens_verification_failed', 'ens_unavailable', 'stale_chain_head'].includes(result.reason)) throw new HttpError(503, 'ENS_VERIFICATION_UNAVAILABLE', 'Current ENS verification could not be completed. Retry when the connection is available; no authority has been assumed.');
     throw new HttpError(403, 'ENS_AUTHORITY_DENIED', result.reason);
   }
@@ -55,31 +61,39 @@ export function arkiv() {
   if (!process.env.ARKIV_ACCESS_KEY) throw new HttpError(503, 'ARKIV_UNCONFIGURED', 'Configure the Arkiv access key to publish and discover networking intents.');
   return createArkivAdapter({ accessKey: process.env.ARKIV_ACCESS_KEY });
 }
-let provider: ReturnType<typeof createProviderFromEnv> | undefined;
+let provider: ReturnType<typeof durableInferenceProvider> | undefined;
 export function inferenceProvider() {
-  provider ??= createProviderFromEnv(process.env);
+  provider ??= durableInferenceProvider(createProviderFromEnv(process.env));
   return provider;
 }
 export function ai() {
   return new MeetiAgentService(inferenceProvider(), async request => {
     const value = await authority(request.actorId, request.action);
     if (value.policy.purpose !== request.purpose) throw new HttpError(403, 'PURPOSE_DENIED', 'This agent policy does not cover the introduction purpose.');
-    const ownerProfile = profile(request.actorId);
+    const ownerProfile = await profile(request.actorId);
     if (!ownerProfile.aiConsent) throw new HttpError(403, 'AI_CONSENT_REQUIRED', 'The owner has not permitted AI evaluation.');
+    const allowedFieldIds: string[] = [];
+    for (const id of request.fieldIds) {
+      if (await qualificationAnswerAllowed(request.actorId, request.subjectId, id, value.policy)
+        || await contextFieldAllowed(request.actorId, id, ownerProfile, value.policy)
+        || (value.policy.allowedFields.includes(id) && ownerProfile.publicFields.includes(id) && !['contact', 'employer', 'documentContext', 'socialLinks'].includes(id))) allowedFieldIds.push(id);
+    }
     return { allowed: true, reason: 'Current ENS authority and purpose-specific disclosure policy verified.',
       policyVersion: value.policy.version, checkedAt: new Date().toISOString(), expiresAt: value.policy.expiresAt,
-      allowedFieldIds: request.fieldIds.filter(id => qualificationAnswerAllowed(request.actorId, request.subjectId, id, value.policy)
-        || contextFieldAllowed(request.actorId, id, ownerProfile, value.policy)
-        || (value.policy.allowedFields.includes(id) && ownerProfile.publicFields.includes(id) && !['contact', 'employer', 'documentContext', 'socialLinks'].includes(id))) };
+      allowedFieldIds };
   });
 }
-export function participant(userId: string, intent: Intent): AgentParticipant {
-  const value = agent(userId);
+export async function participant(userId: string, intent: Intent): Promise<AgentParticipant> {
+  const value = await agent(userId);
   if (!value) throw new HttpError(409, 'AGENT_REQUIRED', 'An agent is unavailable.');
-  const p = profile(userId);
+  const p = await profile(userId);
+  const contextFields: AgentParticipant['fields'] = [];
+  for (const field of await approvedContextFields(userId, p)) {
+    if (await contextFieldAllowed(userId, field.id, p, value.policy)) contextFields.push(field);
+  }
   return { userId, agentId: value.id,
     intent: { id: intent.id, version: intent.version, goal: intent.goal, summary: intent.summary, tags: intent.tags, expiresAt: intent.expiresAt, ...(intent.semantics ? { direction: intent.semantics.direction } : {}) },
     fields: [...['headline', 'bio', 'offering', 'seeking'].filter(id => p.publicFields.includes(id) && value.policy.allowedFields.includes(id))
       .flatMap(id => { const field = p[id as keyof typeof p]; return typeof field === 'string' && field.trim() ? [{ id, label: id, value: field, visibility: 'public' as const }] : []; }),
-      ...approvedContextFields(userId, p).filter(field => contextFieldAllowed(userId, field.id, p, value.policy))] };
+      ...contextFields] };
 }

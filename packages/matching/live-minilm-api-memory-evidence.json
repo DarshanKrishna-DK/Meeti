@@ -1,0 +1,26 @@
+{
+  "kind": "hosted-api-imports-plus-real-onnx",
+  "platform": "win32",
+  "apiStarted": false,
+  "databaseOpened": false,
+  "dimensions": [
+    384,
+    384
+  ],
+  "receipt": {
+    "model": "Xenova/all-MiniLM-L6-v2",
+    "modelRevision": "751bff37182d3f1213fa05d7196b954e230abad9:q8:mean-l2:max256:tjs4.3.2",
+    "dimensions": 384,
+    "format": "meeti.semantic.v2",
+    "requests": 1,
+    "cacheHits": 0,
+    "inputTokens": 24,
+    "estimatedCostUsd": 0
+  },
+  "latencyMs": 910.9114,
+  "rssBefore": 71192576,
+  "rssAfterApiImports": 180867072,
+  "rssAfter": 441208832,
+  "maxRSSKiB": 430868,
+  "limitation": "Imports plus two public-text inferences. Not an active server load test or Linux measurement."
+}

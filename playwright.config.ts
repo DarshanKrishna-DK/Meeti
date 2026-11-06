@@ -19,7 +19,7 @@ export default defineConfig({
     url: `${baseURL}/api/health`,
     timeout: 120000,
     reuseExistingServer: false,
-    env: { APP_ORIGIN: baseURL,
+    env: { APP_ORIGIN: baseURL, DATABASE_PROVIDER: 'sqlite',
       DATABASE_PATH: join(process.cwd(), '.local-data', `e2e-${randomUUID()}.sqlite`),
       DATA_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
       ENS_SEPOLIA_RPC_URL: '', ENS_SEPOLIA_AUTH_RPC_URL: '', ARKIV_ACCESS_KEY: '', AI_API_KEY: '', WORLD_CLIENT_ID: '', WORLD_CLIENT_SECRET: '', WORLD_CAPABILITY_ENABLED: 'false',

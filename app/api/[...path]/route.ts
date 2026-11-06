@@ -1,4 +1,4 @@
-import { route } from '@/packages/server/router';
+import { route } from 'meeti-api-handler';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
