@@ -383,7 +383,7 @@ Choose a reviewed architecture after local acceptance:
 - **Vercel frontend with persistent HTTPS backend:** retain SQLite on a durable host and provide a same-origin API proxy plus reachable embedding service. Proxy and hosting configuration still need implementation and verification.
 - **Vercel with managed persistence:** migrate the database adapter and transactions, then configure a reachable embedding provider with explicit model, revision, dimensions, quotas and approved cost. This migration is not currently implemented.
 
-The owner approved a dedicated Meeti Supabase project in the Merci organization at $0/month with no paid upgrades. Creation was refused because the account has reached its two active free-project limit. No existing project was changed. Supabase is not connected to the application, and the persistence migration is not claimed complete.
+A dedicated Meeti Supabase project has been created in the Merci organization, Mumbai region, under the approved $0/month quote with no paid upgrades. Project health and a read-only PostgreSQL query passed. No existing project was changed by this implementation. The application still uses encrypted SQLite: Supabase provisioning is complete, but application persistence and authentication migration are not implemented or claimed complete.
 
 Prepare Vercel project access, the chosen backend/database host, and the server-side variables listed above. A GitHub-connected dashboard deployment does not require sharing a Vercel token with the app. CLI automation may use a separately scoped VERCEL_TOKEN; it is not a frontend runtime credential. Tokens alone do not solve persistent storage.
 
