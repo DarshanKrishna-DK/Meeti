@@ -8,8 +8,6 @@
 
 **Your agent explores. You choose who gets to meet you.**
 
-An AI networking MVP for **ETHGlobal Mumbai 2026**
-
 ![Next.js](https://img.shields.io/badge/Next.js-16-342432?style=for-the-badge&logo=nextdotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-79445D?style=for-the-badge&logo=typescript&logoColor=white)
 ![ENSv2](https://img.shields.io/badge/ENSv2-Sepolia-79596C?style=for-the-badge)
