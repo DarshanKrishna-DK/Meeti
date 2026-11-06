@@ -11,7 +11,8 @@ vi.mock('../packages/server/discovery', () => ({ freshPublicIntent: external.fre
 vi.mock('../packages/server/identity', () => ({ resolveCurrentPublicAgentIdentityForUser: external.identity }));
 import { closeDatabase, db, saveAgent, saveIntent, agent } from '../packages/server/db';
 import { encrypt } from '../packages/server/crypto';
-import { startQualification, listQualificationDtos, answerQualification, resumeQualification, retryQualification, cancelQualification } from '../packages/server/qualifications';
+import { startQualification, listQualificationDtos, answerQualification, resumeQualification, retryQualification, cancelQualification, continueQualificationCheckpoint, QualificationYield, type QualificationContinuation, type QualificationWorkerOptions } from '../packages/server/qualifications';
+import { db as store } from '../packages/server/store';
 import { qualificationAnswerAllowed, qualificationRecord } from '../packages/server/qualification-context';
 import { HttpError } from '../packages/server/security';
 // Provider and chain decisions are fixtures. SQL transactions, leases, encryption and tenant checks are real.
@@ -60,7 +61,7 @@ function publicIdentity(userId: string, registered = false) {
         association: registered ? { state: 'verified', identity } : { state: 'absent' },
         observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() }, authorityVerified: false, humanVerified: false };
 }
-function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false, duplicateFirstCriterion = false, malformedFirstQuote = false) {
+function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false, duplicateFirstCriterion = false, malformedFirstQuote = false, requestedFieldIds: string[] = []) {
     let calls = 0;
     const transport = vi.fn<typeof fetch>(async (_url, init) => {
         calls++;
@@ -89,7 +90,7 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
         const missing = missingFirstRound && data.round === 1;
         return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
                             message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidence: missing && c.id === 'scope_expectations' ? [] : evidence })),
-                            peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds: [],
+                            peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds,
                         }) } }], usage: { prompt_tokens: 2, completion_tokens: 2 } }));
     });
     // A new adapter per invocation simulates process restart. The SQL ledger must still bound all requests.
@@ -101,6 +102,63 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
     return transport;
 }
 describe('persisted qualification boundaries with fixture providers', () => {
+    it('persists one accepted turn per invocation and finishes from exact checkpoints without replaying calls', async () => {
+        const transport = modelFixture(); let continuation: QualificationContinuation | undefined;
+        const worker: QualificationWorkerOptions = { singleTurn: true, onYield: async value => { expect(store().isTransaction).toBe(true); continuation = value; } };
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, worker)).rejects.toBeInstanceOf(QualificationYield);
+        const first = (await qualificationRecord(continuation!.qualificationId))!;
+        expect(first.row).toMatchObject({ state: 'queued', lease_token: null, lease_until: null });
+        expect(first.value.messages).toHaveLength(1); expect(first.value.attempts).toHaveLength(1); expect(transport).toHaveBeenCalledOnce();
+        const acceptedMessage = structuredClone(first.value.messages[0]);
+        await expect(continueQualificationCheckpoint(left.id, continuation!, () => {}, () => {}, worker)).rejects.toBeInstanceOf(QualificationYield);
+        const second = (await qualificationRecord(continuation!.qualificationId))!;
+        expect(second.value.messages).toHaveLength(2); expect(second.value.attempts).toHaveLength(2); expect(second.value.messages[0]).toEqual(acceptedMessage);
+        expect(transport).toHaveBeenCalledTimes(2);
+        const completed = await continueQualificationCheckpoint(left.id, continuation!, () => {}, () => {}, worker);
+        expect(completed.id).toBeTruthy(); expect((await qualificationRecord(completed.qualificationId))!.row.state).toBe('proposed');
+        expect(transport).toHaveBeenCalledTimes(2);
+    });
+    it('rejects a changed checkpoint, stale version and revoked authority without another model request', async () => {
+        const transport = modelFixture(); let continuation: QualificationContinuation | undefined;
+        const worker: QualificationWorkerOptions = { singleTurn: true, onYield: async value => { continuation = value; } };
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, worker)).rejects.toBeInstanceOf(QualificationYield);
+        await expect(continueQualificationCheckpoint(left.id, { ...continuation!, checkpointDigest: '0'.repeat(64) }, () => {}, () => {}, worker)).rejects.toMatchObject({ code: 'QUALIFICATION_CHECKPOINT_INVALID' });
+        await expect(continueQualificationCheckpoint(left.id, { ...continuation!, version: continuation!.version - 1 }, () => {}, () => {}, worker)).rejects.toMatchObject({ code: 'QUALIFICATION_CHANGED' });
+        saveAgent(right.id, { ...right.a, policy: { ...right.a.policy, version: 2 } });
+        await expect(continueQualificationCheckpoint(left.id, continuation!, () => {}, () => {}, worker)).rejects.toMatchObject({ code: 'QUALIFICATION_CHANGED' });
+        expect(transport).toHaveBeenCalledOnce();
+    });
+    it('saves every requested-field denial before yielding an accepted turn', async () => {
+        const transport = modelFixture([], 0, undefined, false, false, false, ['contact', 'employer']);
+        let continuation: QualificationContinuation | undefined;
+        const worker: QualificationWorkerOptions = { singleTurn: true, onYield: async value => { continuation = value; } };
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, worker)).rejects.toBeInstanceOf(QualificationYield);
+        const saved = (await qualificationRecord(continuation!.qualificationId))!;
+        expect(saved.value.checkpoint!.disclosureChecks).toHaveLength(2);
+        expect(saved.value.checkpoint!.disclosureChecks.every(check => check.allowed === false)).toBe(true);
+        expect(saved.value.checkpoint!.disclosureChecks.map(check => check.fieldId)).toEqual(['contact', 'employer']);
+        expect(saved.value.messages).toHaveLength(1); expect(transport).toHaveBeenCalledOnce();
+    });
+    it('rolls back a failed worker requeue and blocks instead of silently restarting accepted work', async () => {
+        const transport = modelFixture(), marker = randomUUID();
+        const worker: QualificationWorkerOptions = { singleTurn: true, onYield: async () => {
+            await store().prepare('INSERT INTO audit VALUES(?,?,?,?,?,?)').run(marker, left.id, 'fixture', 'temporary', 'Non-private rollback marker', new Date().toISOString());
+            throw new Error('PRIVATE_REQUEUE_ERROR');
+        } };
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, worker)).rejects.toThrow('PRIVATE_REQUEUE_ERROR');
+        const row = db().prepare('SELECT id FROM qualifications').get() as { id: string }, saved = (await qualificationRecord(row.id))!;
+        expect(saved.row).toMatchObject({ state: 'blocked', lease_token: null, lease_until: null });
+        expect(saved.value.failureCode).toBe('PROVIDER_UNAVAILABLE'); expect(saved.value.messages).toHaveLength(1);
+        expect(db().prepare('SELECT id FROM audit WHERE id=?').get(marker)).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
+    });
+    it('does not reserve or dispatch a model request when the invocation deadline is too close', async () => {
+        const transport = modelFixture(), onYield = vi.fn();
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, { singleTurn: true, deadlineMs: Date.now() + 1000, onYield }))
+            .rejects.toMatchObject({ code: 'QUALIFICATION_WORKER_DEADLINE' });
+        const row = db().prepare('SELECT id FROM qualifications').get() as { id: string }, saved = (await qualificationRecord(row.id))!;
+        expect(saved.row.state).toBe('blocked'); expect(saved.value.attempts).toEqual([]); expect(saved.value.messages).toEqual([]);
+        expect(saved.value.retryable).toBe(true); expect(transport).not.toHaveBeenCalled(); expect(onYield).not.toHaveBeenCalled();
+    });
     it('persists a safe failure for an inline quote outside the approved sources without accepting a transcript', async () => {
         const transport = modelFixture([], 0, undefined, false, false, true);
         await expect(start()).rejects.toMatchObject({ code: 'output' });

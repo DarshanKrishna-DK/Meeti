@@ -84,14 +84,14 @@ function AccountDiscoverySchedule({ state, run, busy }: Shared) {
   });
   const controlsBusy = busy || saving || refreshing;
   return <section className="panel form-panel saved-intents" aria-labelledby="discovery-schedule-title">
-    <div className="panel-title"><div><h2 id="discovery-schedule-title">A regular check for new connections.</h2><p className="small-copy">Choose whether the host checks active published intents every minute.</p></div><Tag>{status ? enabled ? 'Scheduling enabled' : 'Scheduling off' : 'Setting not loaded'}</Tag></div>
+    <div className="panel-title"><div><h2 id="discovery-schedule-title">A regular check for new connections.</h2><p className="small-copy">Enable recurring checks for active published intents within the hosting limits below.</p></div><Tag>{status ? enabled ? 'Scheduling enabled' : 'Scheduling off' : 'Setting not loaded'}</Tag></div>
     <p>{status?.hostRequirement || 'Scheduled discovery requires this host to stay awake with Meeti and its discovery worker running. A sleeping or offline host cannot perform checks.'}</p>
     {!state.profile.aiConsent && <p className="draft-warning">Model processing consent is required before enabling scheduled discovery. You can review this choice in your <Link className="inline-link" href="/profile">private profile</Link>.</p>}
     {!enabled && <fieldset className="workspace-controls" disabled={controlsBusy || !state.profile.aiConsent}>
       <Checkline checked={disclosureConsent} onChange={setDisclosureConsent}>I approve sending approved public intent subjects to the configured embedding provider during scheduled checks.</Checkline>
     </fieldset>}
     <div className="form-actions">
-      <button className="button" type="button" role="switch" aria-checked={enabled} aria-label="Scheduled discovery" disabled={controlsBusy || !status || (!enabled && (!state.profile.aiConsent || !disclosureConsent))} onClick={() => void run(() => changeSetting(!enabled), enabled ? 'Scheduled discovery disabled.' : 'Scheduled discovery enabled. The host worker must be running.')}>
+      <button className="button" type="button" role="switch" aria-checked={enabled} aria-label="Scheduled discovery" disabled={controlsBusy || !status || (!enabled && (!state.profile.aiConsent || !disclosureConsent))} onClick={() => void run(() => changeSetting(!enabled), enabled ? 'Scheduled discovery disabled.' : 'Scheduled discovery enabled within the hosting limits shown here.')}>
         <Clock3 size={16} />{saving ? 'Saving setting...' : enabled ? 'Turn off scheduled discovery' : 'Turn on scheduled discovery'}
       </button>
       <Button kind="secondary" disabled={controlsBusy} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw size={15} />{refreshing ? 'Refreshing status...' : 'Refresh status'}</Button>

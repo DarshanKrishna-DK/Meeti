@@ -3,13 +3,14 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const services = vi.hoisted(() => ({ propose: vi.fn(), resume: vi.fn(), retry: vi.fn() }));
+const services = vi.hoisted(() => ({ propose: vi.fn(), resume: vi.fn(), retry: vi.fn(), continuation: vi.fn() }));
 // These fixtures exercise queue/session/fencing rules, not provider integration or matching decisions.
 vi.mock('../packages/server/proposals', () => ({ createProposal: services.propose }));
-vi.mock('../packages/server/qualifications', () => ({ resumeQualification: services.resume, retryQualification: services.retry }));
+vi.mock('../packages/server/qualifications', async original => ({ ...await original<typeof import('../packages/server/qualifications')>(), resumeQualification: services.resume, retryQualification: services.retry, startQualification: services.propose, continueQualificationCheckpoint: services.continuation }));
+import { QualificationYield, type QualificationContinuation, type QualificationWorkerOptions } from '../packages/server/qualifications';
 import { drainAgentTasks, enqueueAgentTask, listAgentTasks, readAgentTask } from '../packages/server/agent-tasks';
 import { closeDatabase, db } from '../packages/server/db';
-import { db as store, closeStore } from '../packages/server/store';
+import { db as store, closeStore, atomic } from '../packages/server/store';
 import { encrypt, hash } from '../packages/server/crypto';
 import { createSession } from '../packages/server/security';
 
@@ -39,6 +40,52 @@ beforeEach(() => {
 afterEach(async () => { await closeStore(); closeDatabase(); vi.useRealTimers(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('durable explicitly requested agent tasks with session and service fixtures', () => {
+  it('requires exact owner and task scope for single-turn execution and does not select another owner', async () => {
+    const actor = await owner(), other = await owner(), task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', input());
+    await expect(drainAgentTasks({ singleTurn: true })).rejects.toMatchObject({ code: 'AGENT_TASK_SCOPE_REQUIRED' });
+    await expect(drainAgentTasks({ taskId: task.taskId })).rejects.toMatchObject({ code: 'AGENT_TASK_SCOPE_REQUIRED' });
+    expect(await drainAgentTasks({ singleTurn: true, userId: other.id, taskId: task.taskId })).toMatchObject({ processed: 0 });
+    expect(services.propose).not.toHaveBeenCalled(); expect((await readAgentTask(actor.id, task.taskId)).status).toBe('queued');
+  });
+  it('atomically requeues the same task with a private accepted checkpoint and completes through continuation', async () => {
+    const actor = await owner(), task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', input());
+    const continuation: QualificationContinuation = { qualificationId: randomUUID(), version: 4, checkpointDigest: 'a'.repeat(64) };
+    services.propose.mockImplementationOnce(async (_user, _id, _key, check, _progress, worker: QualificationWorkerOptions) => {
+      await check(); expect(worker.singleTurn).toBe(true);
+      await atomic(async () => { await worker.onYield!(continuation); });
+      throw new QualificationYield(continuation);
+    });
+    const scoped = { userId: actor.id, taskId: task.taskId, singleTurn: true as const };
+    expect(await drainAgentTasks(scoped)).toMatchObject({ processed: 1, yielded: 1, completed: 0, failed: 0 });
+    const queued = await readAgentTask(actor.id, task.taskId); expect(queued.status).toBe('queued'); expect(queued).not.toHaveProperty('continuation');
+    expect(db().prepare('SELECT id FROM agent_runs').all()).toEqual([]);
+    const stored = JSON.stringify(db().prepare('SELECT * FROM agent_tasks').all()); expect(stored).not.toContain(continuation.qualificationId);
+    services.continuation.mockImplementationOnce(async (_user, saved, check) => { expect(saved).toEqual(continuation); await check(); return { id: null, qualificationId: continuation.qualificationId }; });
+    expect(await drainAgentTasks(scoped)).toMatchObject({ completed: 1, yielded: 0 });
+    expect(await readAgentTask(actor.id, task.taskId)).toMatchObject({ status: 'completed', result: { qualificationId: continuation.qualificationId } });
+    expect(services.propose).toHaveBeenCalledOnce(); expect(services.continuation).toHaveBeenCalledOnce();
+  });
+  it('never requeues an unknown single-turn failure or accepts an uncommitted yield signal', async () => {
+    const actor = await owner(), task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', input());
+    services.propose.mockRejectedValueOnce(new QualificationYield({ qualificationId: randomUUID(), version: 2, checkpointDigest: 'a'.repeat(64) }));
+    const scoped = { userId: actor.id, taskId: task.taskId, singleTurn: true as const };
+    expect(await drainAgentTasks(scoped)).toMatchObject({ failed: 1, yielded: 0 });
+    expect((await readAgentTask(actor.id, task.taskId)).status).toBe('failed');
+    expect(await drainAgentTasks(scoped)).toMatchObject({ processed: 0 }); expect(services.propose).toHaveBeenCalledOnce();
+  });
+  it('rechecks the original session between accepted continuation steps', async () => {
+    const actor = await owner(), task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', input());
+    const continuation: QualificationContinuation = { qualificationId: randomUUID(), version: 4, checkpointDigest: 'a'.repeat(64) };
+    services.propose.mockImplementationOnce(async (_user, _id, _key, _check, _progress, worker: QualificationWorkerOptions) => {
+      await atomic(async () => { await worker.onYield!(continuation); }); throw new QualificationYield(continuation);
+    });
+    const scoped = { userId: actor.id, taskId: task.taskId, singleTurn: true as const };
+    expect(await drainAgentTasks(scoped)).toMatchObject({ yielded: 1 });
+    db().prepare('DELETE FROM sessions WHERE token_hash=?').run(actor.sessionHash);
+    expect(await drainAgentTasks(scoped)).toMatchObject({ failed: 1, yielded: 0 });
+    expect(services.continuation).not.toHaveBeenCalled();
+    expect(await readAgentTask(actor.id, task.taskId)).toMatchObject({ status: 'failed', error: { code: 'AGENT_TASK_SESSION_CLOSED' } });
+  });
   it('enqueues encrypted private input without running models and returns only owner-bound task state', async () => {
     const actor = await owner(), reviewed = input(), reserve = vi.fn(async () => {});
     const task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', reviewed, reserve);

@@ -59,7 +59,9 @@ export async function setDiscoveryEnabled(userId: string, enabled: boolean): Pro
 }
 export async function discoveryJobs(userId: string) {
     const rows = await db().prepare('SELECT * FROM discovery_jobs WHERE user_id=? ORDER BY next_run_at LIMIT 30').all(userId) as Job[];
-    return { enabled: await discoveryEnabled(userId), cadenceSeconds: 60, hostRequirement: 'Run npm run worker:discovery on a persistent Node host. A browser tab is not the scheduler.',
+    return { enabled: await discoveryEnabled(userId), cadenceSeconds: 60, hostRequirement: process.env.MEETI_SERVERLESS === 'true'
+            ? 'On this free deployment, your open discovery page requests a server check at most once per minute. Checks pause when the page is closed. Search now remains available.'
+            : 'Run npm run worker:discovery on a persistent Node host. A browser tab is not the scheduler.',
         jobs: (await Promise.all(rows.map(async (row) => {
             const current = await intent(row.intent_id);
             if (!current || current.userId !== userId)
@@ -81,17 +83,19 @@ export async function rememberDiscovery(userId: string, value: Intent, result: D
         .run(encrypt(result, `discovery:${value.id}:${expected}`), new Date().toISOString(), new Date(Date.now() + cadenceMs).toISOString(), value.id, expected);
 }
 /** Serialized transactions and a persisted fencing token prevent duplicate workers committing expired work. */
-export async function discoveryTick(execute = discoverCandidates): Promise<{
+export async function discoveryTick(execute = discoverCandidates, options: { userId?: string; maximumJobs?: number } = {}): Promise<{
     processed: number;
     failed: number;
 }> {
     let processed = 0, failed = 0;
     const attempted = new Set<string>();
     // Two intents per tick bounds RPC and inference work; overdue coverage is visible in nextRunAt.
-    for (let index = 0; index < 2; index++) {
+    const maximumJobs = options.maximumJobs ?? 2;
+    if (!Number.isInteger(maximumJobs) || maximumJobs < 1 || maximumJobs > 2) throw new Error('discovery_tick_bound_invalid');
+    for (let index = 0; index < maximumJobs; index++) {
         const token = randomUUID(), now = new Date().toISOString();
         const job = await atomic(async () => {
-            const rows = await db().prepare('SELECT * FROM discovery_jobs WHERE enabled=1 AND next_run_at<=? AND (lease_until IS NULL OR lease_until<=?) ORDER BY next_run_at,intent_id LIMIT 3').all(now, now) as Job[];
+            const rows = await db().prepare('SELECT * FROM discovery_jobs WHERE enabled=1 AND next_run_at<=? AND (lease_until IS NULL OR lease_until<=?)' + (options.userId ? ' AND user_id=?' : '') + ' ORDER BY next_run_at,intent_id LIMIT 3').all(now, now, ...(options.userId ? [options.userId] : [])) as Job[];
             const row = rows.find(candidate => !attempted.has(candidate.intent_id));
             if (!row)
                 return null;

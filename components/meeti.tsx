@@ -173,7 +173,7 @@ export function Workspace({ view }: { view: string }) {
   else if (view === 'verify') content = <Verifier busy={busy} run={run} />;
   else if (!state) content = <Auth run={run} busy={busy} />;
   else {
-    const common = { state, run, busy };
+    const common = { state, run, busy, refresh };
     const routes: Record<string, ReactNode> = { profile: <ProfileEditor {...common} />, agent: <AgentStudio {...common} />, intents: <Intents {...common} />, discover: <Discovery {...common} />, activity: <Activity {...common} />, approvals: <Approvals {...common} />, introductions: <Rooms {...common} selected={selected} setSelected={setSelected} />, settings: <Settings {...common} /> };
     content = <div key={state.user.id} className={`screen-content screen-${view}`}>{routes[view] || <Overview {...common} openSetup={()=>setSetup(true)} />}</div>;
   }

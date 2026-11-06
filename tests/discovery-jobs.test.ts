@@ -30,6 +30,13 @@ beforeEach(() => {
 afterEach(() => { closeDatabase(); vi.useRealTimers(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 // The scheduler and SQLite leases are real. The injected retrieval function is a fixture, not live matching evidence.
 describe('durable scheduled discovery boundaries', () => {
+    it('limits a serverless request to its owner and one due intent', async () => {
+        const first = fixture(), second = fixture(), execute = vi.fn(async (userId: string) => { expect(userId).toBe(second.id); return result; });
+        await setDiscoveryEnabled(first.id, true); await setDiscoveryEnabled(second.id, true);
+        expect(await discoveryTick(execute, { userId: second.id, maximumJobs: 1 })).toEqual({ processed: 1, failed: 0 });
+        expect(execute).toHaveBeenCalledTimes(1); expect(execute.mock.calls[0][0]).toBe(second.id);
+        expect((await discoveryJobs(first.id)).jobs[0].checkedAt).toBeNull();
+    });
     it('requires opt-in and survives a database restart with a one-minute next run', async () => {
         const owner = fixture(), execute = vi.fn(async () => result);
         await queueDiscovery(owner.id, owner.value);

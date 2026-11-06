@@ -9,9 +9,31 @@ import { resolveCurrentPublicAgentIdentityForUser } from './identity';
 import { HttpError, requireValue } from './security';
 import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationPublicIdentityBinding, type QualificationRow } from './qualification-context';
 import type { RunningStage } from './agent-runs';
-import { AgentError, qualificationOutputDiagnostic } from '../agents/src';
+import { AgentError, qualificationCheckpointSchema, qualificationOutputDiagnostic } from '../agents/src';
 import { withEnsReadScope } from '../ens/rpc-transport';
 type RecordValue = NonNullable<Awaited<ReturnType<typeof qualificationRecord>>>;
+export type QualificationContinuation = { qualificationId: string; version: number; checkpointDigest: string };
+export type QualificationWorkerOptions = { singleTurn?: true; deadlineMs?: number; onYield?: (continuation: QualificationContinuation) => Promise<void> };
+/** Only a server worker callback can persist and consume this continuation. It is never a public retry request. */
+export class QualificationYield extends Error {
+    constructor(readonly continuation: QualificationContinuation) { super('QUALIFICATION_WORKER_YIELDED'); }
+}
+class AcceptedTurnComplete extends Error {}
+const checkpointReady = 'WORKER_CHECKPOINT_READY';
+function requireWorkerTime(worker: QualificationWorkerOptions) {
+    if (worker.deadlineMs !== undefined && (!Number.isSafeInteger(worker.deadlineMs) || Date.now() + 120000 >= worker.deadlineMs))
+        throw new HttpError(503, 'QUALIFICATION_WORKER_DEADLINE', 'This worker has insufficient time for another bounded model turn and its authorization checks. Review current activity before an explicit retry.');
+}
+function assertAcceptedCheckpoint(record: RecordValue, expectedDigest?: string) {
+    const checkpoint = qualificationCheckpointSchema.safeParse(record.value.checkpoint), attempts = record.value.attempts;
+    if (!checkpoint.success || !checkpoint.data.messages.length || !attempts?.length
+        || hash(JSON.stringify(checkpoint.data.messages)) !== hash(JSON.stringify(record.value.messages))
+        || checkpoint.data.messages.at(-1)?.inference.requestId !== attempts.at(-1)?.requestId
+        || checkpoint.data.messages.some(message => !attempts.some(attempt => attempt.requestId === message.inference.requestId))
+        || expectedDigest && hash(JSON.stringify(checkpoint.data)) !== expectedDigest)
+        throw new HttpError(409, 'QUALIFICATION_CHECKPOINT_INVALID', 'The saved worker checkpoint cannot authorize continuation.');
+    return checkpoint.data;
+}
 const versionInput = z.object({ version: z.number().int().positive() }).strict();
 const answerInput = versionInput.extend({ questionId: z.string().uuid(), text: z.string().trim().min(1).max(1200), fieldClass: z.enum(['bio', 'seeking', 'offering']), providerDisclosureConsent: z.literal(true), shareWithCounterpart: z.literal(true) }).strict();
 async function owned(userId: string, id: string): Promise<RecordValue> {
@@ -132,7 +154,7 @@ export async function listQualificationDtos(userId: string) {
         }
         const otherEns = (await agent(row.left_user === userId ? row.right_user : row.left_user))?.ensName || 'Unavailable agent';
         return { id, version: row.version, state, stopReason: value.result?.stopReason, otherEns, summary: summary(value), proposalId: value.proposalId || null,
-            failureCode: value.failureCode || (state === 'blocked' ? 'CURRENT_AUTHORITY_REQUIRED' : null),
+            failureCode: value.failureCode === checkpointReady ? null : value.failureCode || (state === 'blocked' ? 'CURRENT_AUTHORITY_REQUIRED' : null),
             canRetry: currentValid && state === 'blocked' && canRetry(value), attemptsUsed: value.attempts?.length ?? value.messages.length, maxAttempts,
             publicIdentity: value.publicIdentities ? { own: { context: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].context, association: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].association },
                 counterpart: { context: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].context, association: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].association }, observation: 'checked_before_protected_actions' } : null,
@@ -140,7 +162,7 @@ export async function listQualificationDtos(userId: string) {
             questions: value.questions.filter(question => question.ownerAgentId === ownAgent).map(question => ({ id: question.id, question: question.question, answered: value.answers.some(answer => answer.questionId === question.id) })) };
     }));
 }
-export async function startQualification(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void | Promise<void>, progress: (stage: RunningStage) => void | Promise<void>) {
+export async function startQualification(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void | Promise<void>, progress: (stage: RunningStage) => void | Promise<void>, worker: QualificationWorkerOptions = {}) {
     const own = requireValue(await intent(ownIntentId), 'Choose an active networking intent.');
     if (own.userId !== userId)
         throw new HttpError(404, 'NOT_FOUND', 'Networking intent was not found.');
@@ -173,9 +195,10 @@ export async function startQualification(userId: string, ownIntentId: string, ca
     const record = await owned(userId, id);
     if (record.row.state !== 'queued')
         return { id: record.value.proposalId || null, qualificationId: id };
-    return execute(userId, id, record.row.version, checkSession, progress);
+    return execute(userId, id, record.row.version, checkSession, progress, false, worker);
 }
-async function execute(userId: string, id: string, version: number, checkSession: () => void | Promise<void>, progress: (stage: RunningStage) => void | Promise<void> = () => { }, retry = false) {
+async function execute(userId: string, id: string, version: number, checkSession: () => void | Promise<void>, progress: (stage: RunningStage) => void | Promise<void> = () => { }, retry = false, worker: QualificationWorkerOptions = {}, continuationDigest?: string) {
+    if (worker.singleTurn && !worker.onYield) throw new HttpError(409, 'QUALIFICATION_WORKER_REQUIRED', 'A durable worker continuation is required for bounded execution.');
     const token = randomUUID();
     await atomic(async () => {
         const record = await owned(userId, id);
@@ -183,6 +206,10 @@ async function execute(userId: string, id: string, version: number, checkSession
         await checkSession();
         if (record.row.version !== version || !(retry ? record.row.state === 'blocked' && canRetry(record.value) : ['queued', 'needs_owner'].includes(record.row.state)))
             throw new HttpError(409, 'QUALIFICATION_CHANGED', 'This conversation is not ready for this review.');
+        if (continuationDigest) {
+            if (record.row.state !== 'queued' || record.value.failureCode !== checkpointReady) throw new HttpError(409, 'QUALIFICATION_CHECKPOINT_INVALID', 'This conversation has no accepted worker continuation.');
+            assertAcceptedCheckpoint(record, continuationDigest);
+        } else if (record.value.failureCode === checkpointReady) throw new HttpError(409, 'QUALIFICATION_WORKER_REQUIRED', 'Continue this accepted checkpoint through its existing agent task.');
         if (!record.value.attempts && record.row.state === 'needs_owner') {
             const completed = record.value.result;
             if (!completed || completed.state !== 'needs_owner' || completed.messages.length !== completed.round * 2
@@ -198,6 +225,7 @@ async function execute(userId: string, id: string, version: number, checkSession
             throw new HttpError(409, 'QUALIFICATION_BUSY', 'Another review already started.');
     });
     try {
+        requireWorkerTime(worker);
         let record = await owned(userId, id);
         await progress('evaluating_fit');
         const identities = await live(record);
@@ -213,12 +241,17 @@ async function execute(userId: string, id: string, version: number, checkSession
         const left = await participant(record.row.left_user, snapshot.leftIntent), right = await participant(record.row.right_user, snapshot.rightIntent);
         left.fields.push(...await qualificationFields(id, record.row.left_user));
         right.fields.push(...await qualificationFields(id, record.row.right_user));
+        let completedTurn: { pendingDisclosures: number } | undefined;
+        const saved = (retry || continuationDigest) ? record.value.checkpoint ?? record.value.result : record.value.result;
         const result = await ai().qualifyIntroduction({ left, right, purpose: snapshot.leftIntent.goal, maxRounds: 3,
-            ...(retry && record.value.checkpoint ? { checkpoint: record.value.checkpoint } : record.value.result ? { priorState: record.value.result } : {}),
-            ownerAnswers: record.value.answers.filter(answer => !(retry ? record.value.checkpoint ?? record.value.result : record.value.result)?.answers.some(prior => prior.questionId === answer.questionId)).map(({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent }) => ({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent })),
+            ...((retry || continuationDigest) && record.value.checkpoint ? { checkpoint: record.value.checkpoint } : record.value.result ? { priorState: record.value.result } : {}),
+            ownerAnswers: record.value.answers.filter(answer => !saved?.answers.some(prior => prior.questionId === answer.questionId)).map(({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent }) => ({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent })),
             beforeInference: async (reservation, checkpoint) => {
+                if (worker.singleTurn && completedTurn) throw new HttpError(409, 'QUALIFICATION_WORKER_BOUND', 'This worker already accepted its bounded model turn.');
+                requireWorkerTime(worker);
                 await currentPublicIdentities(await owned(userId, id));
-                return await atomic(async () => {
+                requireWorkerTime(worker);
+                await atomic(async () => {
                     await checkSession();
                     await progress('exchanging_context');
                     const active = await owned(userId, id);
@@ -226,6 +259,7 @@ async function execute(userId: string, id: string, version: number, checkSession
                     if (active.row.state !== 'running' || active.row.lease_token !== token)
                         throw new HttpError(409, 'QUALIFICATION_STOPPED', 'This review was stopped.');
                     const attempts = active.value.attempts;
+                    requireWorkerTime(worker);
                     if (!attempts || attempts.length >= maxAttempts || attempts.some(attempt => attempt.requestId === reservation.requestId)
                         || !Number.isFinite(reservation.reservedCostUsd) || reservation.reservedCostUsd < 0
                         || attempts.reduce((sum, attempt) => sum + attempt.reservedCostUsd, 0) + reservation.reservedCostUsd > costLimit())
@@ -240,7 +274,7 @@ async function execute(userId: string, id: string, version: number, checkSession
             onProgress: async (event) => {
                 if (event.kind === 'turn_completed' || event.kind === 'state_completed')
                     await currentPublicIdentities(await owned(userId, id));
-                return await atomic(async () => {
+                await atomic(async () => {
                     await checkSession();
                     await progress('exchanging_context');
                     const active = await owned(userId, id);
@@ -257,6 +291,11 @@ async function execute(userId: string, id: string, version: number, checkSession
                         active.value.checkpoint = event.checkpoint;
                     await persist(active, 'running', token);
                 });
+                if (worker.singleTurn) {
+                    if (event.kind === 'turn_completed') completedTurn = { pendingDisclosures: event.message.requestedFieldIds.length };
+                    else if (event.kind === 'disclosure_checked' && completedTurn) completedTurn.pendingDisclosures--;
+                    if (completedTurn && completedTurn.pendingDisclosures === 0) throw new AcceptedTurnComplete();
+                }
             } });
         await progress('rechecking_permissions');
         await live(await owned(userId, id));
@@ -292,6 +331,27 @@ async function execute(userId: string, id: string, version: number, checkSession
         });
     }
     catch (error) {
+        if (error instanceof AcceptedTurnComplete && worker.singleTurn && worker.onYield) {
+            try {
+              const continuation = await atomic(async () => {
+                await checkSession();
+                const active = await owned(userId, id);
+                await current(active);
+                if (active.row.state !== 'running' || active.row.lease_token !== token) throw new HttpError(409, 'QUALIFICATION_STOPPED', 'This review was stopped.');
+                const checkpoint = assertAcceptedCheckpoint(active);
+                active.value.failureCode = checkpointReady; active.value.retryable = false;
+                await persist(active, 'queued', token);
+                await db().prepare('UPDATE qualifications SET lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?').run(id, token);
+                const continuation = { qualificationId: id, version: active.row.version + 1, checkpointDigest: hash(JSON.stringify(checkpoint)) };
+                await worker.onYield!(continuation);
+                return continuation;
+              });
+              throw new QualificationYield(continuation);
+            } catch (yieldError) {
+              if (yieldError instanceof QualificationYield) throw yieldError;
+              error = yieldError;
+            }
+        }
         const record = await owned(userId, id);
         if (record.row.state === 'running' && record.row.lease_token === token) {
             const outputDiagnostic = qualificationOutputDiagnostic(error);
@@ -302,6 +362,10 @@ async function execute(userId: string, id: string, version: number, checkSession
         }
         throw error;
     }
+}
+export async function continueQualificationCheckpoint(userId: string, continuation: QualificationContinuation, checkSession: () => void | Promise<void>, progress: (stage: RunningStage) => void | Promise<void>, worker: QualificationWorkerOptions) {
+    const input = z.object({ qualificationId: z.string().uuid(), version: z.number().int().positive(), checkpointDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(continuation);
+    return execute(userId, input.qualificationId, input.version, checkSession, progress, false, worker, input.checkpointDigest);
 }
 export async function answerQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>) {
     const input = answerInput.parse(body), record = await owned(userId, id);
@@ -327,18 +391,18 @@ export async function answerQualification(userId: string, id: string, body: unkn
         return { id: null, qualificationId: id, version: fresh.row.version + 1 };
     });
 }
-export async function resumeQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>, progress?: (stage: RunningStage) => void | Promise<void>) {
+export async function resumeQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>, progress?: (stage: RunningStage) => void | Promise<void>, worker: QualificationWorkerOptions = {}) {
     const { version } = versionInput.parse(body), record = await owned(userId, id);
     if (!record.value.answers.some(answer => !record.value.result?.answers.some(prior => prior.questionId === answer.questionId)))
         throw new HttpError(409, 'OWNER_ANSWER_REQUIRED', 'A new owner answer is required before resuming.');
-    return execute(userId, id, version, checkSession, progress);
+    return execute(userId, id, version, checkSession, progress, false, worker);
 }
-export async function retryQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>, progress?: (stage: RunningStage) => void | Promise<void>) {
+export async function retryQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>, progress?: (stage: RunningStage) => void | Promise<void>, worker: QualificationWorkerOptions = {}) {
     const { version } = versionInput.parse(body);
     const record = await recoverInterrupted(await owned(userId, id));
     if (record.row.version !== version)
         throw new HttpError(409, 'QUALIFICATION_CHANGED', 'Refresh this conversation before retrying.');
-    return execute(userId, id, version, checkSession, progress, true);
+    return execute(userId, id, version, checkSession, progress, true, worker);
 }
 export async function cancelQualification(userId: string, id: string, body: unknown, checkSession: () => void | Promise<void>) {
     const { version } = versionInput.parse(body);

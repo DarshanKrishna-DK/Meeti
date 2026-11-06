@@ -5,7 +5,7 @@ import { decrypt, encrypt, sign } from './crypto';
 import { HttpError } from './security';
 import { withAgentRun, type RunningStage } from './agent-runs';
 import { createProposal } from './proposals';
-import { resumeQualification, retryQualification } from './qualifications';
+import { continueQualificationCheckpoint, QualificationYield, resumeQualification, retryQualification, startQualification, type QualificationContinuation, type QualificationWorkerOptions } from './qualifications';
 
 const queuedLifetimeMs = 15 * 60000;
 const runningLifetimeMs = 20 * 60000;
@@ -15,7 +15,8 @@ const proposeInput = z.object({ intentId: z.string().uuid().transform(value => v
 const continuationInput = z.object({ qualificationId: z.string().uuid().transform(value => value.toLowerCase()), version: z.number().int().positive() }).strict();
 const taskResult = z.object({ id: z.string().uuid().nullable(), qualificationId: z.string().uuid() }).strict();
 const taskError = z.object({ code: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/), message: z.string().max(300) }).strict();
-const payloadSchema = z.object({ version: z.literal(1), kind: taskKind, input: z.unknown(), sessionHash: z.string().regex(/^[a-f0-9]{64}$/), wallet: z.string().regex(/^0x[a-f0-9]{40}$/), result: taskResult.optional(), error: taskError.optional() }).strict();
+const checkpointContinuation = z.object({ qualificationId: z.string().uuid(), version: z.number().int().positive(), checkpointDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const payloadSchema = z.object({ version: z.literal(1), kind: taskKind, input: z.unknown(), sessionHash: z.string().regex(/^[a-f0-9]{64}$/), wallet: z.string().regex(/^0x[a-f0-9]{40}$/), result: taskResult.optional(), error: taskError.optional(), continuation: checkpointContinuation.optional() }).strict();
 export type AgentTaskKind = z.infer<typeof taskKind>;
 export type AgentTaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'expired';
 type Payload = Omit<z.infer<typeof payloadSchema>, 'input'> & { input: z.infer<typeof proposeInput> | z.infer<typeof continuationInput> };
@@ -47,10 +48,10 @@ async function checkSession(userId: string, sessionHash: string, expectedWallet?
   if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet) || expectedWallet && expectedWallet !== wallet) throw new HttpError(409, 'AGENT_TASK_WALLET_CHANGED', fixedError('AGENT_TASK_WALLET_CHANGED').message);
   return wallet;
 }
-async function expireTasks(userId?: string) {
+async function expireTasks(userId?: string, taskId?: string) {
   const now = new Date().toISOString();
-  const rows = await db().prepare("SELECT * FROM agent_tasks WHERE status IN ('queued','running') AND expires_at<=?" + (userId ? ' AND user_id=?' : ''))
-    .all(now, ...(userId ? [userId] : [])) as TaskRow[];
+  const rows = await db().prepare("SELECT * FROM agent_tasks WHERE status IN ('queued','running') AND expires_at<=?" + (userId ? ' AND user_id=?' : '') + (taskId ? ' AND id=?' : ''))
+    .all(now, ...(userId ? [userId] : []), ...(taskId ? [taskId] : [])) as TaskRow[];
   let interrupted = 0, expired = 0;
   for (const row of rows) {
     const status = row.status === 'running' ? 'interrupted' : 'expired';
@@ -138,17 +139,23 @@ async function failTask(row: TaskRow, token: string, error: unknown) {
 }
 
 /** Only explicitly enqueued actions run. Expired running work is interrupted, never replayed. */
-export async function drainAgentTasks() {
-  const counts = { processed: 0, completed: 0, failed: 0, interrupted: 0, expired: 0, busy: false };
+export type DrainAgentTasksOptions = { userId?: string; taskId?: string; singleTurn?: true; deadlineMs?: number };
+export type DrainAgentTasksResult = { processed: number; completed: number; yielded: number; failed: number; interrupted: number; expired: number; busy: boolean };
+export async function drainAgentTasks(options: DrainAgentTasksOptions = {}): Promise<DrainAgentTasksResult> {
+  const checked = z.object({ userId: z.string().uuid().optional(), taskId: z.string().uuid().optional(), singleTurn: z.literal(true).optional(), deadlineMs: z.number().int().positive().optional() }).strict().parse(options);
+  if (checked.taskId && !checked.userId || checked.singleTurn && (!checked.taskId || !checked.userId)) throw new HttpError(403, 'AGENT_TASK_SCOPE_REQUIRED', 'Bounded execution requires the authenticated owner and exact task.');
+  const counts: DrainAgentTasksResult = { processed: 0, completed: 0, yielded: 0, failed: 0, interrupted: 0, expired: 0, busy: false };
   if (draining) return { ...counts, busy: true };
   draining = true;
   try {
     const token = randomUUID();
     const row = await atomic(async () => {
-      Object.assign(counts, await expireTasks());
-      const next = await db().prepare("SELECT * FROM agent_tasks WHERE status='queued' ORDER BY created_at,id LIMIT 1").get() as TaskRow | undefined;
+      Object.assign(counts, await expireTasks(checked.userId, checked.taskId));
+      const next = await db().prepare("SELECT * FROM agent_tasks WHERE status='queued'" + (checked.userId ? ' AND user_id=?' : '') + (checked.taskId ? ' AND id=?' : '') + ' ORDER BY created_at,id LIMIT 1')
+        .get(...(checked.userId ? [checked.userId] : []), ...(checked.taskId ? [checked.taskId] : [])) as TaskRow | undefined;
       if (!next) return null;
       const now = new Date().toISOString();
+      if (checked.singleTurn && await db().prepare("SELECT id FROM agent_runs WHERE user_id=? AND status='running' AND expires_at>?").get(next.user_id, now)) { counts.busy = true; return null; }
       const changed = await db().prepare("UPDATE agent_tasks SET status='running',lease_token=?,updated_at=?,expires_at=? WHERE id=? AND status='queued' AND expires_at>?")
         .run(token, now, new Date(Date.now() + runningLifetimeMs).toISOString(), next.id, now);
       return changed.changes === 1 ? next : null;
@@ -158,18 +165,32 @@ export async function drainAgentTasks() {
     try {
       const payload = decode(row), check = () => activeSession(row, token, payload);
       await check();
-      const result = await withAgentRun(row.user_id, async progress => {
+      const worker: QualificationWorkerOptions = checked.singleTurn ? { singleTurn: true, deadlineMs: checked.deadlineMs, onYield: async (continuation: QualificationContinuation) => {
+        if (!db().isTransaction) throw new HttpError(409, 'AGENT_TASK_CHECKPOINT_TRANSACTION', 'The accepted checkpoint and task must commit together.');
+        await check();
+        const value = checkpointContinuation.parse(continuation);
+        const now = new Date().toISOString();
+        const changed = await db().prepare("UPDATE agent_tasks SET status='queued',data=?,lease_token=NULL,updated_at=?,expires_at=? WHERE id=? AND user_id=? AND status='running' AND lease_token=? AND expires_at>?")
+          .run(encrypt({ ...payload, continuation: value }, `agent-task:${row.user_id}:${row.id}`), now, new Date(Date.now() + queuedLifetimeMs).toISOString(), row.id, row.user_id, token, now);
+        if (changed.changes !== 1) throw new HttpError(409, 'AGENT_TASK_INTERRUPTED', fixedError('AGENT_TASK_INTERRUPTED').message);
+        await audit(row.user_id, 'agent_task', 'checkpointed', 'One accepted model turn and its disclosure checks were saved. The same task remains queued for its next bounded step.');
+      } } : {};
+      const work = async (progress: (stage: RunningStage) => void | Promise<void>) => {
         const guardedProgress = async (stage: RunningStage) => { await check(); await progress(stage); await check(); };
         await check();
+        if (payload.continuation) return continueQualificationCheckpoint(row.user_id, payload.continuation, check, guardedProgress, worker);
         if (payload.kind === 'propose') {
           const input = proposeInput.parse(payload.input);
+          if (checked.singleTurn) return startQualification(row.user_id, input.intentId, input.candidateKey, check, guardedProgress, worker);
           return createProposal(row.user_id, input.intentId, input.candidateKey, check, guardedProgress);
         }
         const input = continuationInput.parse(payload.input);
         return payload.kind === 'resume'
-          ? resumeQualification(row.user_id, input.qualificationId, { version: input.version }, check, guardedProgress)
-          : retryQualification(row.user_id, input.qualificationId, { version: input.version }, check, guardedProgress);
-      });
+          ? resumeQualification(row.user_id, input.qualificationId, { version: input.version }, check, guardedProgress, ...(checked.singleTurn ? [worker] : []))
+          : retryQualification(row.user_id, input.qualificationId, { version: input.version }, check, guardedProgress, ...(checked.singleTurn ? [worker] : []));
+      };
+      // A bounded serverless step has its own durable task lease. No orphan process-local run can block continuation.
+      const result = checked.singleTurn ? await work(() => {}) : await withAgentRun(row.user_id, work);
       const reviewedResult = taskResult.parse(result);
       await atomic(async () => {
         await check();
@@ -180,6 +201,10 @@ export async function drainAgentTasks() {
       });
       counts.completed = 1;
     } catch (error) {
+      if (error instanceof QualificationYield && checked.singleTurn) {
+        const current = await db().prepare('SELECT * FROM agent_tasks WHERE id=? AND user_id=?').get(row.id, row.user_id) as TaskRow | undefined;
+        if (current?.status === 'queued' && JSON.stringify(decode(current).continuation) === JSON.stringify(error.continuation)) { counts.yielded = 1; return counts; }
+      }
       if (await failTask(row, token, error) === 'interrupted') counts.interrupted++;
       else counts.failed++;
     }

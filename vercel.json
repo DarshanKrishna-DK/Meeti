@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "node scripts/prepare-embedding-model.mjs && npm run build && node scripts/verify-serverless-bundle.mjs",
+  "regions": ["bom1"]
+}

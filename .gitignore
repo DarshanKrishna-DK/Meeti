@@ -2,6 +2,7 @@ node_modules/
 .next/
 .next-e2e/
 .next-preview/
+.next-vercel/
 .env*
 !.env.example
 .local-data/

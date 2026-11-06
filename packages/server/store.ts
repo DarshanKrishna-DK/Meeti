@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { Pool, type PoolClient } from 'pg';
+import { attachDatabasePool } from '@vercel/functions';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import { db as localDatabase } from './db';
 import { decrypt, encrypt } from './crypto';
@@ -32,10 +33,12 @@ function pool(key: string) {
   const url = new URL(key);
   if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.password) throw new Error('database_connection_invalid');
   for (const option of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']) url.searchParams.delete(option);
-  const value = new Pool({ connectionString: url.toString(), max: 3, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000,
+  const serverless = process.env.MEETI_SERVERLESS === 'true';
+  const value = new Pool({ connectionString: url.toString(), max: serverless ? 2 : 3, connectionTimeoutMillis: 10000, idleTimeoutMillis: serverless ? 1000 : 30000,
     ssl: { rejectUnauthorized: true, ...(process.env.SUPABASE_DATABASE_CA ? { ca: process.env.SUPABASE_DATABASE_CA } : {}) },
     options: '-c search_path=pg_catalog,meeti_private -c statement_timeout=15000 -c lock_timeout=10000',
   });
+  if (serverless) attachDatabasePool(value);
   value.on('error', () => { console.warn('database_idle_connection_unavailable'); });
   poolState = { key, pool: value }; return value;
 }

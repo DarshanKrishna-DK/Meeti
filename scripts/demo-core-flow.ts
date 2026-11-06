@@ -9,19 +9,22 @@ import type { IntentSemantics } from '../packages/matching/src/semantics';
 import type { InferenceReceipt } from '../packages/agents/src';
 import { PublicIntentSchema, intentSigningMessage, type PublicIntent } from '../packages/arkiv/src';
 import { availabilitySchema, normalizeAvailability, overlappingSlots, type MeetingSlot } from '../packages/server/meeting-time';
+import { DemoAuthError, demoTarget, reauthenticateDemoAccounts, type DemoAuthBinding } from './demo-auth-only';
+import { db as privateStore, closeStore } from '../packages/server/store';
 
 // Operator-controlled fictional accounts use the real HTTP API. This driver never signs
 // chain transactions, publishes records, inserts database rows, or bypasses World.
 type Label = 'demo-seeker' | 'demo-recruiter';
 type Case = 'job' | 'collaboration';
-type Mode = 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'retry' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
+type Mode = 'reauthenticate' | 'poll-task' | 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'retry' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
 type Vault = { version: 1; wallets: { label: string; privateKey: `0x${string}` }[] };
 type Prepared = { inputHash: string; interpretation: { output: { goal: Intent['goal']; summary: string; tags: string[]; semantics: IntentSemantics }; inference: InferenceReceipt }; intentId?: string; publicPreview?: PublicIntent };
 type Discovery = { candidates: Candidate[]; source: 'arkiv'; mode: 'semantic'; embeddingExecution: string; coverage: unknown; observedBlocks: string[] };
 type Qualification = { id: string; version: number; state: string; otherEns: string; stopReason: string; failureCode: string | null; canRetry: boolean; proposalId: string | null; messages: { id: string; createdAt: string }[]; questions: { id: string; question: string; answered: boolean }[] };
 type Progress = { version: 1; origin: string; sessions: Partial<Record<Label, string>>; accounts: Partial<Record<Label, string>>;
   prepared: Partial<Record<`${Case}:${Label}`, Prepared>>; discovery: Partial<Record<`${Case}:${Label}`, Discovery>>;
-  qualifications: Partial<Record<Case, { qualificationId: string; id: string | null }>>; pending?: { step: string; startedAt: string };
+  qualifications: Partial<Record<Case, { qualificationId: string; id: string | null }>>; pending?: { step: string; startedAt: string; origin?: string; taskId?: string; label?: Label; case?: Case };
+  hostedAuth?: Record<string, DemoAuthBinding>; taskHistory?: { taskId: string; step: string; origin: string; status: string }[];
   answerReceipts?: Record<string, { inputDigest: string; recordedAt: string }>; meetingGateEvidence?: { proposalId: string; version: number; code: 'WORLD_PAUSED'; checkedAt: string } };
 type MeetingView = Awaited<ReturnType<typeof import('../packages/server/meetings').meetingDto>>;
 const labelSchema = z.enum(['demo-seeker', 'demo-recruiter']);
@@ -35,7 +38,7 @@ const mode = process.argv[2] as Mode;
 const option = (name: string, fallback: string) => { const index = process.argv.indexOf(name); return index < 0 ? fallback : process.argv[index + 1]; };
 const selectedCase = option('--case', 'job') as Case;
 const requestTimeoutMs = Number(process.env.DEMO_HTTP_TIMEOUT_MS || 240000);
-const origin = new URL(process.env.APP_ORIGIN || 'http://127.0.0.1:3173').origin;
+let origin = '', explicitTarget = false;
 const statePath = '.local-data/demo-core-flow.enc', stateContext = 'meeti-demo-core-flow-v1';
 const labels: Label[] = ['demo-seeker', 'demo-recruiter'];
 const cases: Record<Case, Record<Label, string>> = {
@@ -57,12 +60,16 @@ function save() {
   writeFileSync(temporary, encrypt(progress, stateContext), { mode: 0o600 }); renameSync(temporary, statePath);
 }
 function summary(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
-async function call<T>(label: Label, path: string, body?: unknown): Promise<{ data: T; response: Response }> {
-  const response = await fetch(`${origin}/api/${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(requestTimeoutMs),
-    headers: { origin, 'content-type': 'application/json', ...(progress.sessions[label] ? { cookie: progress.sessions[label]! } : {}) },
+async function call<T>(label: Label, path: string, body?: unknown, timeoutMs = requestTimeoutMs): Promise<{ data: T; response: Response }> {
+  if (!/^[a-zA-Z0-9_/-]+$/.test(path) || path.includes('..')) throw new DemoError('UNSAFE_API_PATH');
+  const session = explicitTarget ? progress.hostedAuth?.[origin]?.sessions[label] : progress.sessions[label];
+  if (explicitTarget && !session && path !== 'health') throw new DemoError('EXPLICIT_REAUTHENTICATION_REQUIRED');
+  const response = await fetch(`${origin}/api/${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
+    headers: { origin, 'content-type': 'application/json', ...(session ? { cookie: session } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const result = await response.json() as { data: T; error?: { code: string; message?: string } };
   if (!response.ok) {
+    if (explicitTarget && response.status === 401) throw new DemoError('EXPLICIT_REAUTHENTICATION_REQUIRED');
     const safeOutputReasons: Record<string, string> = {
       'The AI provider response did not match the required completion schema.': 'COMPLETION_SCHEMA',
       'The AI provider did not return a complete structured result.': 'INCOMPLETE_RESULT',
@@ -74,7 +81,38 @@ async function call<T>(label: Label, path: string, body?: unknown): Promise<{ da
     const detail = result.error?.code === 'AI_OUTPUT' ? safeOutputReasons[result.error.message || ''] : undefined;
     throw new DemoError(`HTTP_${response.status}_${String(result.error?.code || 'REQUEST_FAILED').replace(/[^A-Za-z0-9_]/g, '').slice(0, 100)}${detail ? `_${detail}` : ''}`);
   }
+  if (response.status === 202 && body !== undefined && (path === 'proposals' || /^qualifications\/[0-9a-f-]+\/(resume|retry)$/.test(path))) {
+    const task = z.object({ taskId: z.string().uuid(), status: z.enum(['queued', 'running']) }).passthrough().parse(result.data);
+    if (!progress.pending) throw new DemoError('TASK_REQUIRES_DURABLE_PENDING_REQUEST');
+    progress.pending = { ...progress.pending, origin, taskId: task.taskId, label }; save();
+    return await pollTask<T>(label, task.taskId);
+  }
   return { data: result.data, response };
+}
+async function pollTask<T>(label: Label, taskId: string): Promise<{ data: T; response: Response }> {
+  labelSchema.parse(label); z.string().uuid().parse(taskId);
+  const duration = Number(process.env.DEMO_TASK_POLL_TIMEOUT_MS || 600000);
+  if (!Number.isInteger(duration) || duration < 1000 || duration > 1200000) throw new DemoError('TASK_POLL_TIMEOUT_MUST_BE_AT_MOST_TWENTY_MINUTES');
+  const deadline = Date.now() + duration;
+  while (Date.now() < deadline) {
+    const value = await call<{ taskId: string; status: string; result?: unknown; error?: { code?: string } }>(label, `agent-tasks/${taskId}`, undefined, Math.min(requestTimeoutMs, Math.max(1000, deadline - Date.now())));
+    if (value.data.taskId !== taskId) throw new DemoError('TASK_READBACK_MISMATCH');
+    if (value.data.status === 'completed') {
+      const result = z.object({ id: z.string().uuid().nullable(), qualificationId: z.string().uuid() }).strict().parse(value.data.result);
+      return { data: result as T, response: value.response };
+    }
+    if (['failed', 'interrupted', 'expired'].includes(value.data.status)) throw new DemoError(`AGENT_TASK_${value.data.status.toUpperCase()}`);
+    if (!['queued', 'running'].includes(value.data.status)) throw new DemoError('TASK_STATUS_INVALID');
+    await new Promise(resolve => setTimeout(resolve, Math.min(1000, Math.max(0, deadline - Date.now()))));
+  }
+  throw new DemoError('TASK_POLL_TIMEOUT_POINTER_PRESERVED');
+}
+async function pollSavedTask() {
+  const pending = progress.pending;
+  if (!pending?.taskId || !pending.label || pending.origin !== origin || pending.case !== selectedCase) throw new DemoError('MATCHING_SAVED_TASK_POINTER_REQUIRED');
+  const result = await pollTask<{ id: string | null; qualificationId: string }>(pending.label, pending.taskId);
+  progress.qualifications[selectedCase] = result.data; delete progress.pending; save();
+  summary({ completed: true, mode: 'poll-task', taskId: pending.taskId, case: selectedCase, result: result.data, newActionEnqueued: false });
 }
 function cookie(response: Response, name: string) {
   const value = response.headers.getSetCookie().find(header => header.startsWith(`${name}=`));
@@ -104,8 +142,20 @@ async function metered<T>(step: string, action: () => Promise<T>, commit: (resul
   if (!process.argv.includes('--allow-provider')) throw new DemoError('PROVIDER_EXECUTION_REQUIRES_ALLOW_PROVIDER_AND_CONTROLLED_SERVER_BUDGET');
   const requests = Number(process.env.AI_MAX_REQUESTS), cost = Number(process.env.AI_MAX_COST_USD);
   if (!Number.isInteger(requests) || requests < 1 || requests > 24 || !Number.isFinite(cost) || cost <= 0 || cost > 0.05) throw new DemoError('REQUIRE_AI_MAX_REQUESTS_AT_MOST_24_AND_AI_MAX_COST_USD_AT_MOST_0_05');
+  if (progress.pending?.taskId) {
+    const pending = progress.pending;
+    if (pending.origin !== origin || !pending.label || !pending.taskId) throw new DemoError('PENDING_TASK_ORIGIN_MISMATCH');
+    if (pending.step === step && !process.argv.includes('--retry-uncertain')) {
+      const result = await pollTask(pending.label, pending.taskId) as T;
+      commit(result); delete progress.pending; save(); return result;
+    }
+    const task = (await call<{ status: string }>(pending.label, `agent-tasks/${pending.taskId}`)).data;
+    if (!process.argv.includes('--retry-uncertain') || !['failed', 'interrupted', 'expired'].includes(task.status)) throw new DemoError('PREVIOUS_TASK_MUST_BE_RESOLVED_BEFORE_NEW_ACTION');
+    progress.taskHistory = [...(progress.taskHistory || []), { taskId: pending.taskId, step: pending.step, origin, status: task.status }].slice(-20);
+    delete progress.pending; save();
+  }
   if (progress.pending && !process.argv.includes('--retry-uncertain')) throw new DemoError('UNCERTAIN_PREVIOUS_PROVIDER_CALL_INSPECT_BEFORE_RETRY');
-  progress.pending = { step, startedAt: new Date().toISOString() }; save();
+  progress.pending = { step, startedAt: new Date().toISOString(), origin, case: selectedCase }; save();
   const result = await action(); commit(result); delete progress.pending; save(); return result;
 }
 function expectedName(label: Label) { return `networking.${label}.users.meeti-demo.eth`; }
@@ -324,20 +374,43 @@ async function inspect() {
   summary({ checkedAt: new Date().toISOString(), fictional: true, humanVerified: false, scope: 'Actual local HTTP accounts, configured live integrations only when successful. No human/device acceptance is implied.', pending: progress.pending || null, accounts: views });
 }
 try {
+  const target = demoTarget({ APP_ORIGIN: process.env.APP_ORIGIN, DEMO_AUTH_TARGET_ORIGIN: process.env.DEMO_AUTH_TARGET_ORIGIN }); origin = target.origin; explicitTarget = target.explicit;
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000 || requestTimeoutMs > 600000) throw new DemoError('DEMO_HTTP_TIMEOUT_MUST_BE_BOUNDED_AT_TEN_MINUTES');
-  if (!['setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'retry', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
-  if (!['127.0.0.1', 'localhost'].includes(new URL(origin).hostname) || new URL(origin).protocol !== 'http:') throw new DemoError('DEMO_DRIVER_REQUIRES_LOCAL_HTTP_ORIGIN');
+  if (!['reauthenticate', 'poll-task', 'setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'retry', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
+  if (mode === 'reauthenticate' && (!explicitTarget || process.argv.length !== 3 || process.env.DATABASE_PROVIDER !== 'postgres' || !process.env.SUPABASE_DATABASE_URL)) throw new DemoError('REAUTHENTICATION_REQUIRES_EXPLICIT_POSTGRES_TARGET_WITHOUT_OTHER_ACTION_FLAGS');
   mkdirSync('.local-data', { recursive: true });
   try { const lock = openSync('.local-data/demo-core-flow.lock', 'wx', 0o600); lockOwned = true; closeSync(lock); }
   catch { throw new DemoError('ANOTHER_DRIVER_OR_STALE_LOCK_REQUIRES_INSPECTION'); }
   progress = existsSync(statePath) ? decrypt<Progress>(readFileSync(statePath, 'utf8'), stateContext) : { version: 1, origin, sessions: {}, accounts: {}, prepared: {}, discovery: {}, qualifications: {} };
-  if (progress.version !== 1 || progress.origin !== origin) throw new DemoError('ENCRYPTED_PROGRESS_ORIGIN_MISMATCH');
-  const vault = decrypt<Vault>(readFileSync('.local-data/demo-wallets.enc', 'utf8'), 'meeti-demo-wallets-v1');
-  if (vault.version !== 1 || vault.wallets.length !== 2) throw new DemoError('UNEXPECTED_DEMO_VAULT');
+  if (progress.version !== 1 || !explicitTarget && progress.origin !== origin) throw new DemoError('ENCRYPTED_PROGRESS_ORIGIN_MISMATCH');
+  if (mode === 'reauthenticate') {
+    const vault = decrypt<Vault>(readFileSync('.local-data/demo-wallets.enc', 'utf8'), 'meeti-demo-wallets-v1');
+    if (vault.version !== 1) throw new DemoError('UNEXPECTED_DEMO_VAULT');
+    const binding = await reauthenticateDemoAccounts({ origin, expectedAccounts: progress.accounts, wallets: vault.wallets,
+      preflight: async (_label, id, address) => {
+        const existing = await privateStore().prepare('SELECT id,wallet FROM users WHERE id=?').get(id) as { id: string; wallet: string | null } | undefined;
+        if (!existing || existing.wallet?.toLowerCase() !== address.toLowerCase()) throw new DemoError('MIGRATED_ACCOUNT_PREFLIGHT_FAILED');
+      } });
+    progress.hostedAuth ||= {}; progress.hostedAuth[origin] = binding; save();
+    summary({ completed: true, mode, origin, fictional: true, humanVerified: false, authenticatedAccounts: labels.map(label => ({ label, userId: binding.accounts[label], wallet: binding.wallets[label] })),
+      scope: 'Existing Postgres accounts reauthenticated with nonce-bound wallet messages. Local sessions, prepared intents, dialogue history and pending tasks were preserved. No setup, model, publication or chain transaction was requested.' });
+  } else {
   const health = (await call<{ integrations: AppState['integrations'] }>('demo-seeker', 'health')).data;
   if (health.integrations.world.status !== 'deferred') throw new DemoError('ACTUAL_SERVER_MUST_KEEP_WORLD_PAUSED');
+  if (explicitTarget) {
+    const binding = progress.hostedAuth?.[origin];
+    if (!binding || labels.some(label => binding.accounts[label] !== progress.accounts[label] || !binding.sessions[label])) throw new DemoError('EXPLICIT_REAUTHENTICATION_REQUIRED');
+    for (const label of labels) {
+      const current = (await call<AppState>(label, 'state')).data;
+      if (current.user.id !== binding.accounts[label] || current.user.wallet?.toLowerCase() !== binding.wallets[label].toLowerCase()) throw new DemoError('SAVED_ACCOUNT_MISMATCH');
+    }
+  } else {
+  const vault = decrypt<Vault>(readFileSync('.local-data/demo-wallets.enc', 'utf8'), 'meeti-demo-wallets-v1');
+  if (vault.version !== 1 || vault.wallets.length !== 2) throw new DemoError('UNEXPECTED_DEMO_VAULT');
   for (const label of labels) { const wallet = vault.wallets.find(wallet => wallet.label === label); if (!wallet) throw new DemoError('MISSING_DEMO_WALLET'); await authenticate(label, wallet.privateKey); }
+  }
   if (progress.accounts['demo-seeker'] === progress.accounts['demo-recruiter']) throw new DemoError('TWO_DISTINCT_ACCOUNTS_REQUIRED');
+  if (mode === 'poll-task') await pollSavedTask();
   if (mode === 'setup') for (const label of labels) await setup(label);
   if (mode === 'prepare-publications') {
     for (const label of labels) await prepare(label);
@@ -355,8 +428,13 @@ try {
   if (mode === 'meeting') await meeting();
   if (mode === 'meeting-plan') await meetingPlan();
   if (mode !== 'prepare-publications' && mode !== 'discover' && mode !== 'meeting') await inspect();
+  }
 } catch (error) {
   // API bodies, cookies, keys and untrusted provider error strings are deliberately omitted.
-  summary({ completed: false, mode, case: selectedCase, code: error instanceof DemoError ? error.code : 'DEMO_DRIVER_FAILED',
+  summary({ completed: false, mode, case: selectedCase, code: error instanceof DemoError || error instanceof DemoAuthError ? error.code : 'DEMO_DRIVER_FAILED',
     note: 'No success is assumed. Inspect encrypted progress before retrying an uncertain provider operation. World remains paused.' }); process.exitCode = 1;
-} finally { if (lockOwned) rmSync('.local-data/demo-core-flow.lock'); }
+} finally {
+  try { if (mode === 'reauthenticate') await closeStore(); }
+  catch { summary({ completed: false, code: 'AUTH_CONNECTION_CLEANUP_FAILED' }); process.exitCode = 1; }
+  finally { if (lockOwned) rmSync('.local-data/demo-core-flow.lock'); }
+}
