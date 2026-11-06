@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ContextDocument } from '../shared/src';
 import { atomic, audit, db } from './db';
 import { checkOrigin, HttpError, rateLimit, requireUser } from './security';
-import { assertDocumentCapacity, assertDocumentVersion, createDocument, deleteDocument, documentBytes, listDocuments,
+import { assertDocumentCapacity, assertDocumentVersion, createStoredDocument, deleteStoredDocument, loadDocumentBytes, listDocuments, reconcilePrivateObjects,
   MAX_DOCUMENT_BYTES, MAX_EXTRACTED_TEXT, MAX_REVIEWED_EXCERPT, ownedDocument, recipientShare, saveOriginalShare, updateDocument } from './context-store';
 import { extractPrivatePdf } from './pdf-extraction';
 import { authority, policyDigest } from './policy';
@@ -70,22 +70,33 @@ export async function handleContext(request: Request, key: string, body?: unknow
   if (request.method === 'GET') {
     if (key === 'context/files') return ok(listDocuments(actor.id));
     const download = /^context\/files\/([a-f0-9-]{36})\/download$/.exec(key);
-    if (download) { const value = documentBytes(actor.id, download[1]); return attachment(value.document, value.bytes); }
+    if (download) { const value = await loadDocumentBytes(actor.id, download[1], checkSession); return attachment(value.document, value.bytes); }
     const shared = /^context\/shared\/([a-f0-9-]{36})$/.exec(key);
     if (shared) {
       const grant = recipientShare(actor.id, shared[1]);
       requireWorldCapability();
+      const initialAccess = await roomAccess(actor.id, grant.roomId);
+      const initialOwner = await authority(grant.ownerId, 'message'); assertContextField(initialOwner);
+      checkPairForRelease(initialAccess.p); recipientShare(actor.id, shared[1]);
+      if (grant.proposalDigest !== initialAccess.p.row.digest || grant.proposalId !== initialAccess.p.row.id
+        || grant.policyDigest !== policyDigest(initialOwner.policy) || ![initialAccess.p.row.left_user, initialAccess.p.row.right_user].includes(grant.ownerId)
+        || grant.ownerId === actor.id) throw new HttpError(403, 'DOCUMENT_GRANT_CHANGED', 'This document grant no longer matches the protected introduction.');
+      const initialDocument = ownedDocument(grant.ownerId, grant.documentId).document;
+      assertDocumentVersion(initialDocument, grant.version); assertOriginalAllowed(initialDocument);
+      const value = await loadDocumentBytes(grant.ownerId, grant.documentId, checkSession);
+      // Fetching ciphertext is not permission to release it. Recheck every protected gate after the await.
       const access = await roomAccess(actor.id, grant.roomId);
       const owner = await authority(grant.ownerId, 'message');
       checkSession();
       return atomic(() => {
+        checkSession();
         checkPairForRelease(access.p);
         const currentGrant = recipientShare(actor.id, shared[1]);
         if (currentGrant.proposalDigest !== access.p.row.digest || currentGrant.proposalId !== access.p.row.id
           || policyDigest(owner.policy) !== currentGrant.policyDigest || ![access.p.row.left_user, access.p.row.right_user].includes(grant.ownerId)
           || grant.ownerId === actor.id) throw new HttpError(403, 'DOCUMENT_GRANT_CHANGED', 'This document grant no longer matches the protected introduction.');
         assertContextField(owner);
-        const value = documentBytes(grant.ownerId, grant.documentId);
+        assertDocumentVersion(ownedDocument(grant.ownerId, grant.documentId).document, value.document.version);
         assertDocumentVersion(value.document, grant.version);
         assertOriginalAllowed(value.document);
         audit(actor.id, 'private_document', 'shared_download', 'Downloaded one explicitly granted original through a protected introduction.');
@@ -105,9 +116,14 @@ export async function handleContext(request: Request, key: string, body?: unknow
     const extraction = input.mimeType === 'application/pdf' ? await extractPrivatePdf(decoded.bytes)
       : { extractionStatus: decoded.text?.trim() ? 'ready' as const : 'no-text' as const, extractedText: decoded.text?.slice(0, MAX_EXTRACTED_TEXT) || '' };
     checkSession();
-    const document = createDocument(actor.id, { name: input.name, mimeType: input.mimeType, ...extraction }, decoded.bytes, checkSession);
+    const document = await createStoredDocument(actor.id, { name: input.name, mimeType: input.mimeType, ...extraction }, decoded.bytes, checkSession);
     audit(actor.id, 'private_document', 'created', 'Stored an encrypted private original and a bounded extracted preview. Agent context and original sharing remain disabled.');
     return ok(document);
+  }
+  if (key === 'context/files/reconcile') {
+    z.object({}).strict().parse(body);
+    rateLimit(`private-context-reconcile:${actor.id}`, 3, 60000);
+    return ok(await reconcilePrivateObjects(actor.id, checkSession));
   }
   const match = /^context\/files\/([a-f0-9-]{36})\/(update|delete|share)$/.exec(key);
   if (!match) throw new HttpError(404, 'NOT_FOUND', 'This private document endpoint was not found.');
@@ -121,7 +137,7 @@ export async function handleContext(request: Request, key: string, body?: unknow
   }
   if (action === 'delete') {
     const input = z.object({ expectedVersion: versionSchema }).strict().parse(body);
-    deleteDocument(actor.id, id, input.expectedVersion, checkSession);
+    await deleteStoredDocument(actor.id, id, input.expectedVersion, checkSession);
     audit(actor.id, 'private_document', 'deleted', 'Deleted an encrypted private document and its original sharing grants.');
     return ok({ deleted: true });
   }

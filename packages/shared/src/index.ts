@@ -6,6 +6,10 @@ export type Profile = {
   displayName: string; headline: string; bio: string; seeking: string; offering: string;
   tags: string[]; contact: string; employer: string; publicFields: string[]; aiConsent: boolean;
   socialLinks?: { label: string; url: string }[];
+  roles?: string[]; skills?: string[]; interests?: string[]; goals?: string[];
+  location?: string; timezone?: string; languages?: string[]; availability?: string;
+  collaborationMode?: 'unspecified' | 'remote' | 'hybrid' | 'in-person';
+  contextSharing?: 'private-agent' | 'authorized-counterpart' | 'ask-first';
 };
 export type ContextDocument = { id: string; name: string; mimeType: 'application/pdf' | 'text/plain' | 'text/markdown'; size: number;
   version: number; extractedText: string; extractionStatus: 'ready' | 'no-text' | 'failed';

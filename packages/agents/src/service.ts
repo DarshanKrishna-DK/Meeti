@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { AgentError, type InferenceReceipt, type StructuredProvider } from "./provider";
+import { runQualification, type QualificationInput } from "./qualification";
+import { runProfileIntake, type ProfileIntakeInput } from "./intake";
 
 const text = z.string().trim().min(1).max(1500);
 const goalSchema = z.enum(["cofounder", "collaborator", "mentor", "teammate"]);
@@ -22,6 +24,7 @@ const participantSchema = z.object({
     id: z.string().min(1).max(200), version: z.number().int().positive(), goal: goalSchema,
     summary: text, tags: z.array(z.string().min(1).max(50)).max(12),
     expiresAt: z.string().datetime(),
+    direction: z.enum(['seeking-job', 'hiring', 'seeking-help', 'offering-expertise', 'collaborating', 'cofounding', 'joining-team', 'seeking-teammate', 'unknown']).optional(),
   }).strict(),
   fields: z.array(z.object({
     id: z.string().min(1).max(100), label: z.string().min(1).max(100), value: text,
@@ -102,6 +105,20 @@ function validateParticipant(value: AgentParticipant): AgentParticipant {
 
 export class MeetiAgentService {
   constructor(private readonly provider: StructuredProvider, private readonly authorize: PolicyAuthorizer) {}
+
+  /** Owner-facing extraction only. Each follow-up is bound to a prior question and explicit provider consent. */
+  async continueProfileIntake(input: ProfileIntakeInput) {
+    return runProfileIntake(this.provider, input);
+  }
+
+  /** Advisory qualification only. Current independent authorization remains mandatory per actual turn. */
+  async qualifyIntroduction(input: QualificationInput) {
+    const [left, right] = this.pair(input.left, input.right);
+    return runQualification(this.provider, { ...input, left, right }, {
+      project: (owner, viewer) => this.project(owner, viewer, "negotiate", input.purpose),
+      checkDisclosure: (requester, owner, fieldId) => this.checkDisclosure(requester, owner, input.purpose, fieldId),
+    });
+  }
 
   async structureOnboarding(input: { text: string; providerDisclosureConsent: true }) {
     this.requireTextConsent(input);

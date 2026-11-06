@@ -1,7 +1,7 @@
 import { http, webSocket } from "viem";
 
 const readMethods = new Set([
-  "eth_chainId", "eth_blockNumber", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getBalance",
+  "eth_chainId", "eth_blockNumber", "eth_getBlockByNumber", "eth_getBlockByHash", "eth_call", "eth_getCode", "eth_getStorageAt", "eth_getBalance",
   "eth_getTransactionCount", "eth_estimateGas", "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_feeHistory",
   "eth_getTransactionReceipt", "eth_getTransactionByHash", "eth_getLogs", "net_version",
 ]);

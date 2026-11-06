@@ -173,6 +173,12 @@ export class OpenAICompatibleProvider implements StructuredProvider {
       let parsed: z.infer<typeof responseSchema>;
       try { parsed = responseSchema.parse(JSON.parse(new TextDecoder().decode(buffer))); }
       catch { throw new AgentError("output", "The AI provider response did not match the required completion schema."); }
+      // Provider usage still consumes the cap when local task validation rejects the output.
+      const cost = (parsed.usage.prompt_tokens * this.config.inputUsdPerMillion + parsed.usage.completion_tokens * this.config.outputUsdPerMillion) / 1_000_000;
+      if (cost > reserve) this.reservedCostUsd += cost - reserve;
+      if (parsed.usage.completion_tokens > this.config.maxOutputTokens || this.reservedCostUsd > this.config.maxCostUsd) {
+        throw new AgentError("budget", "The provider usage exceeded the configured budget. Further AI requests are blocked.");
+      }
       const choice = parsed.choices[0];
       if (choice.finish_reason !== "stop" || choice.message.refusal || !choice.message.content) {
         throw new AgentError("output", "The AI provider did not return a complete structured result.");
@@ -180,12 +186,6 @@ export class OpenAICompatibleProvider implements StructuredProvider {
       let output: T;
       try { output = request.outputSchema.parse(JSON.parse(choice.message.content)); }
       catch { throw new AgentError("output", "The AI result did not match the required task schema."); }
-      const cost = (parsed.usage.prompt_tokens * this.config.inputUsdPerMillion + parsed.usage.completion_tokens * this.config.outputUsdPerMillion) / 1_000_000;
-      // Keep the conservative reservation even when requests fail or actual usage is lower.
-      if (cost > reserve) this.reservedCostUsd += cost - reserve;
-      if (parsed.usage.completion_tokens > this.config.maxOutputTokens || this.reservedCostUsd > this.config.maxCostUsd) {
-        throw new AgentError("budget", "The provider usage exceeded the configured budget. Further AI requests are blocked.");
-      }
       return { output, inference: {
         requestId, providerRequestId: parsed.id ?? response.headers.get("x-request-id"), model: parsed.model ?? this.config.model,
         inputTokens: parsed.usage.prompt_tokens, outputTokens: parsed.usage.completion_tokens, estimatedCostUsd: cost,

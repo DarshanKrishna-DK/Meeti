@@ -24,6 +24,11 @@ import { agentRuns, withAgentRun } from './agent-runs';
 import { handleContext } from './context';
 import { policyHistory } from './policy-history';
 import { approvedDocumentContext } from './context-store';
+import { discoveryJobs, queueDiscovery, rememberDiscovery, setDiscoveryEnabled } from './discovery-jobs';
+import { meetingAction, meetingDto } from './meetings';
+import { continueIntake, profileIntakes } from './profile-intake';
+import { listQualificationDtos, answerQualification, resumeQualification, cancelQualification } from './qualifications';
+import { handleIdentity, publicAgentResponse } from './identity';
 
 function ok(data: unknown, cookie?: string): Response {
   return Response.json({ data }, { headers: { 'Cache-Control': 'no-store', ...(cookie ? { 'Set-Cookie': cookie } : {}) } });
@@ -70,12 +75,26 @@ export async function route(request: Request, path: string[]): Promise<Response>
     const key = path.join('/');
     if (request.method === 'GET') {
       if (key === 'health') return ok({ status: 'ok', storage: 'sqlite', integrations: diagnostics() });
+      if (path[0] === 'public' && path[1] === 'agents' && path.length === 4 && ['context', 'registration'].includes(path[3])) {
+        rateLimit('public-agent-records', 30);
+        return await publicAgentResponse(path[2], path[3] as 'context' | 'registration');
+      }
       const onboarding = handleOnboarding(request, key);
       if (onboarding) return onboarding;
       const actor = requireUser(request);
+      const identityResponse = await handleIdentity(request, key, actor);
+      if (identityResponse) return identityResponse;
       const context = await handleContext(request, key);
       if (context) return context;
       if (key === 'state') return ok(state(actor));
+      if (key === 'qualifications') return ok(listQualificationDtos(actor.id));
+      if (key === 'discovery/jobs') return ok(discoveryJobs(actor.id));
+      if (key === 'profile/intakes') return ok(profileIntakes(actor.id));
+      if (path[0] === 'proposals' && path[2] === 'meeting' && path.length === 3) {
+        const p = ownedProposal(actor.id, z.string().uuid().parse(path[1]));
+        await validatePair(p, 'introduce'); requireUser(request);
+        return ok(meetingDto(actor.id, p.row.id));
+      }
       if (key === 'agent/policies') {
         const current = agent(actor.id);
         if (current) saveAgent(actor.id, current);
@@ -131,6 +150,8 @@ export async function route(request: Request, path: string[]): Promise<Response>
     }
     const actor = requireUser(request);
     rateLimit(`api:${actor.id}`, 120);
+    const identityResponse = await handleIdentity(request, key, actor, body);
+    if (identityResponse) return identityResponse;
     const context = await handleContext(request, key, body);
     if (context) return context;
     const importedAgent = await handleAgentImport(request, key, body);
@@ -242,6 +263,16 @@ export async function route(request: Request, path: string[]): Promise<Response>
       audit(actor.id, 'ai_structure', 'completed', result.inference.requestId);
       return ok(result);
     }
+    if (key === 'profile/intake') {
+      rateLimit('intake:' + actor.id, 6, 3600000);
+      return ok(await continueIntake(actor.id, body, () => { requireUser(request); }));
+    }
+    if (key === 'discovery/settings') {
+      const input = z.object({ enabled: z.boolean(), providerDisclosureConsent: z.literal(true).optional() }).strict().parse(body);
+      if (input.enabled && !input.providerDisclosureConsent) throw new HttpError(403, 'PROVIDER_CONSENT_REQUIRED', 'Approve provider processing for scheduled semantic discovery.');
+      setDiscoveryEnabled(actor.id, input.enabled);
+      return ok(discoveryJobs(actor.id));
+    }
     if (key === 'intent') {
       const input = intentInputSchema.parse(body);
       const a = requireValue(agent(actor.id), 'Set up your agent before creating a networking intent.');
@@ -251,7 +282,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
       const value: Intent = { id: previous?.id || randomUUID(), version: (previous?.version || 0) + 1,
         goal: input.goal, summary: input.summary, tags: input.tags, expiresAt: input.expiresAt, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
         status: 'draft', demoOrigin: input.demoOrigin, semantics: input.semantics };
-      saveIntent(actor.id, value); clearEmbeddingCache(); audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Public preview approved.`);
+      saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache(); audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Public preview approved.`);
       return ok(value);
     }
     if (key === 'intent/close') {
@@ -261,7 +292,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
       if (db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted')) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before closing this intent.');
       const value: Intent = { ...previous, version: previous.version + 1, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
         status: 'draft', publicStatus: 'closed', arkivKey: undefined, transactionHash: undefined };
-      saveIntent(actor.id, value); clearEmbeddingCache();
+      saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache();
       audit(actor.id, 'intent', 'closure_prepared', 'Local matching stopped. Publish the reviewed closure revision to update the public index.');
       return ok(value);
     }
@@ -292,6 +323,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
       if (policyDigest(a.policy) !== policyDigest(requireValue(agent(actor.id), 'Agent unavailable.').policy) || ownIntent(actor.id, value.id).version !== value.version) throw new HttpError(409, 'STATE_CHANGED', 'Intent or policy changed during confirmation.');
       saveIntent(actor.id, { ...value, status: value.publicStatus === 'closed' ? 'revoked' : 'published', arkivKey: confirmed.entityKey, transactionHash: input.txHash });
       db().prepare('UPDATE operations SET state=? WHERE id=?').run('confirmed', row.id); audit(actor.id, 'arkiv_publish', 'confirmed', input.txHash);
+      queueDiscovery(actor.id, ownIntent(actor.id, value.id));
       return ok({ entityKey: confirmed.entityKey, transactionHash: input.txHash });
     }
     if (path[0] === 'operations' && path.length === 3) {
@@ -319,6 +351,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
       const result = await discoverCandidates(actor.id,value,input);
       requireUser(request);
       assertIntent(ownIntent(actor.id,value.id));
+      rememberDiscovery(actor.id, value, result);
       audit(actor.id,'discovery','semantic_ranked',`${result.candidates.length} Arkiv candidates ranked with bounded semantic coverage.`);
       return ok(result);
     }
@@ -327,8 +360,24 @@ export async function route(request: Request, path: string[]): Promise<Response>
       rateLimit('evaluate:' + actor.id, 4, 3600000);
       return ok(await withAgentRun(actor.id, progress => createProposal(actor.id, input.intentId, input.candidateKey, () => { requireUser(request); }, progress)));
     }
+    if (path[0] === 'qualifications' && path.length === 3) {
+      const id = z.string().uuid().parse(path[1]);
+      const checkSession = () => { if (requireUser(request).id !== actor.id) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Sign in again before continuing.'); };
+      if (path[2] === 'answer') { rateLimit('qualification-answer:' + actor.id, 12); return ok(await answerQualification(actor.id, id, body, checkSession)); }
+      if (path[2] === 'cancel') return ok(cancelQualification(actor.id, id, body, checkSession));
+      if (path[2] === 'resume') {
+        rateLimit('evaluate:' + actor.id, 4, 3600000);
+        return ok(await withAgentRun(actor.id, progress => resumeQualification(actor.id, id, body, checkSession, progress)));
+      }
+    }
     if (path[0] === 'proposals' && path.length === 3) {
       const id = z.string().uuid().parse(path[1]);
+      if (path[2] === 'meeting') {
+        const input = z.object({ action: z.enum(['availability', 'select', 'confirm', 'finalize', 'cancel']), version: z.number().int().positive(),
+          availability: z.unknown().optional(), slot: z.object({ start: z.string(), end: z.string() }).strict().optional() }).strict().parse(body);
+        rateLimit('meeting:' + actor.id, 20);
+        return ok(await meetingAction(actor.id, id, input, () => { requireUser(request); }));
+      }
       if (path[2] === 'consent') return ok(await consent(actor.id, id, z.object({ decision: z.enum(['approve', 'decline', 'revoke']) }).strict().parse(body).decision));
       if (path[2] === 'open') return ok(await openRoom(actor.id, id, () => { requireUser(request); }));
       if (path[2] === 'disclosure') {

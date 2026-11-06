@@ -159,6 +159,30 @@ describe("bilateral Arkiv candidate ranking", () => {
     const provider = embeddings(); provider.embed = async () => { throw new MatchingError("provider", "Unavailable"); };
     await expect(rankCandidates({ source: participant(1, "seeking-job"), candidates: [participant(2, "hiring")], embeddingProvider: provider, now })).rejects.toThrow("Unavailable");
   });
+  it.each(["intent", "authority"])("denies a %s that expires during real-time inference", async boundary => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    try {
+      const source = participant(1, "seeking-job"), candidate = participant(2, "hiring");
+      if (boundary === "authority") { source.expiresAt = candidate.expiresAt = new Date(now + 120_000).toISOString(); }
+      const provider = embeddings();
+      provider.embed = async () => { vi.setSystemTime(now + 60_001); return { vectors: [[1, 0], [1, 0]], receipt }; };
+      const [result] = await rankCandidates({ source, candidates: [candidate], embeddingProvider: provider });
+      expect(result).toMatchObject({ state: "no-match", eligible: false, cosine: 1, embedding: receipt });
+      expect(result.reasons.join(' ')).toContain('elapsed during');
+    } finally { vi.useRealTimers(); }
+  });
+  it("withdraws an earlier eligible batch when a later batch outlives authority", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+    try {
+      const source = participant(1, "seeking-job"), candidates = Array.from({ length: 16 }, (_, index) => participant(index + 2, "hiring"));
+      let batches = 0;
+      const provider = embeddings();
+      provider.embed = async texts => { if (++batches === 2) vi.setSystemTime(now + 60_001); return { vectors: texts.map(() => [1, 0]), receipt }; };
+      const result = await rankCandidates({ source, candidates, embeddingProvider: provider });
+      expect(batches).toBe(2); expect(result.every(value => !value.eligible && value.state === "no-match")).toBe(true);
+      expect(result.some(value => value.reasons.join(' ').includes('before ranking completed'))).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe("bounded embedding transport and cache", () => {

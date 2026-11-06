@@ -9,6 +9,7 @@ import type { EnsAuthorityResult } from '@/packages/ens';
 import { DEFAULT_POLICY_ACTIONS, DEFAULT_POLICY_DAYS, DEFAULT_POLICY_FIELDS } from '@/packages/shared/src/default-policy';
 import { Button, Checkline, Field, Tag, WalletPanel, api, short, submitTransaction, type Shared } from './workspace-features';
 import { DraftConflict } from './draft-conflict';
+import { IdentitySetup } from './identity-setup';
 import styles from './context-library.module.css';
 
 type AgentDraft = {
@@ -26,7 +27,7 @@ type AgentDraft = {
 
 const purposes: Goal[] = ['cofounder', 'collaborator', 'mentor', 'teammate'];
 const purposeLabels: Record<Goal, string> = { cofounder: 'Find a cofounder', collaborator: 'Find a collaborator', mentor: 'Find a mentor', teammate: 'Find a teammate' };
-const fieldLabels: Record<string, string> = { displayName: 'Name', headline: 'One-line introduction', bio: 'Story', seeking: 'What I seek', offering: 'What I offer', tags: 'Topics', socialLinks: 'Approved social links', documentContext: 'Reviewed document excerpts', contact: 'Private contact', employer: 'Private employer' };
+const fieldLabels: Record<string, string> = { displayName: 'Name', headline: 'One-line introduction', bio: 'Story', seeking: 'What I seek', offering: 'What I offer', tags: 'Topics', socialLinks: 'Approved social links', documentContext: 'Reviewed document excerpts', profileContext: 'Approved private profile context', contact: 'Private contact', employer: 'Private employer' };
 const actionLabels: Record<Action, string> = { discover: 'Discover public intents', publish: 'Publish reviewed intents', evaluate: 'Evaluate compatibility', negotiate: 'Exchange permitted context', introduce: 'Propose introductions', message: 'Send room messages' };
 const operations = [
   ['deploy-registry', 'Create agent namespace'],
@@ -64,6 +65,11 @@ type PolicySnapshot = { ensName: string; delegate: string; persona: string; poli
 
 export function AgentStudio(props: Shared) {
   return <AccountAgentStudio key={props.state.user.id} {...props} />;
+}
+
+function OptionalIdentitySetup({ state, run, busy }: Shared) {
+  const [open, setOpen] = useState(false);
+  return <section className="panel form-panel"><h2>Portable agent identity</h2><p className="small-copy">Inspect the optional public identity registration and supported endpoint records. Opening this panel requests fresh chain information. Each write needs a separate wallet review.</p><Button kind="secondary" disabled={busy} onClick={() => setOpen(value => !value)}>{open ? 'Close identity setup' : 'Open identity setup'}</Button>{open && <IdentitySetup state={state} onUpdated={() => { void run(async () => {}, 'Identity receipt updated.'); }} />}</section>;
 }
 
 function AccountAgentStudio({ state, run, busy }: Shared) {
@@ -160,6 +166,7 @@ function AccountAgentStudio({ state, run, busy }: Shared) {
       </aside>
     </div>
 
+    <OptionalIdentitySetup state={state} run={run} busy={busy} />
     <section className="panel form-panel transaction-panel"><details className="advanced-agent"><summary>Advanced ENS transactions and receipt verification</summary>
       <fieldset className={styles.fieldset} disabled={busy}>
       <div className="panel-title"><div><h2>Manage permission at its source.</h2><p className="small-copy">Actual ENSv2 wallet actions on Sepolia.</p></div><Tag>Wallet approval required</Tag></div>

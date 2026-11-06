@@ -11,6 +11,7 @@ export const ARKIV_CHAIN_ID = 7794095;
 export const ARKIV_NATIVE_ADDRESS = '0x4400000000000000000000000000000000000044' as const;
 export const ARKIV_SCHEMA_NAME = 'meeti.public_intent.v2';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_ENVELOPE_BYTES = 16_384;
 const encoder = new TextEncoder();
 const hex32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
@@ -132,7 +133,7 @@ async function decodeDiscoveredEntity(raw: unknown, observedBlock: bigint, now: 
   const flags = exactRecord(row.$creationFlags);
   if (flags.readonly !== true || flags.permissionlessExtension !== false) throw safeFailure('Arkiv publication flags are invalid');
   const encoded = typedValue(row, 'envelope', 'bytes');
-  if (typeof encoded !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/.test(encoded) || encoded.length > 32_770) throw safeFailure('Invalid public intent envelope');
+  if (typeof encoded !== 'string' || !/^0x(?:[0-9a-fA-F]{2})*$/.test(encoded) || encoded.length > MAX_ENVELOPE_BYTES * 2 + 2) throw safeFailure('Invalid public intent envelope');
   let decoded: unknown;
   try { decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(hexToBytes(encoded as Hex))); }
   catch { throw safeFailure('Invalid public intent envelope'); }
@@ -231,16 +232,21 @@ export function createArkivAdapter(config: { accessKey: string; now?: () => numb
       for (const candidate of list.slice(0, parsed.limit ?? 20)) {
         const latest = await client.select().from(PublicIntents, { onMismatch: 'throw' })
           .ownedBy(candidate.owner).createdBy(candidate.owner).where(eq('intentId', candidate.intent.intentId))
-          .orderBy(desc('version')).limit(1).fetch();
+          .orderBy(desc('version')).limit(2).fetch();
         const block = big(latest.blockNumber);
         observedBlocks.push(block.toString());
-        if (latest.entities.length !== 1 || latest.skipped !== 0) continue;
+        if (!latest.entities.length || latest.entities.length > 2 || latest.skipped !== 0) continue;
         let newest: DiscoveredIntent;
         try { newest = await decodeDiscoveredEntity(latest.entities[0], block, now(), false); }
         catch { rejectedEntities++; continue; }
         if (newest.intent.version > candidate.intent.version) continue;
         if (newest.intent.version !== candidate.intent.version || intentDigest(newest.intent) !== intentDigest(candidate.intent)) {
           throw safeFailure('Public intent version changed during discovery');
+        }
+        // Tied versions have node-defined order. Any second key is ambiguous, even with identical content.
+        if (latest.entities[1] && typedValue(exactRecord(latest.entities[1]), 'version', 'u64') === BigInt(candidate.intent.version)) {
+          rejectedEntities++;
+          continue;
         }
         if (liveIntent(candidate.intent, now())) checked.push(candidate);
       }
@@ -254,9 +260,10 @@ export function createArkivAdapter(config: { accessKey: string; now?: () => numb
     if (Date.parse(intent.expiresAt) <= now()) throw safeFailure('Only unexpired public records can be published');
     if (!/^\d+$/.test(input.maxFeeWei) || BigInt(input.maxFeeWei) <= 0n) throw safeFailure('A positive maximum fee is required');
     if (!await verifyMessage({ address: intent.owner as Address, message: intentSigningMessage(intent), signature: input.signature })) throw safeFailure('The owner must sign the exact public intent preview');
+    const envelope = encoder.encode(JSON.stringify({ intent, signature: input.signature }));
+    if (envelope.byteLength > MAX_ENVELOPE_BYTES) throw safeFailure('The public intent envelope exceeds the supported byte limit. Reduce the reviewed public projection before publishing.');
     try {
       if (await client.getChainId() !== ARKIV_CHAIN_ID) throw safeFailure('Unexpected Arkiv network');
-      const envelope = encoder.encode(JSON.stringify({ intent, signature: input.signature }));
       const values = { intentId: intent.intentId, ensAgentRef: intent.ensAgentRef, goal: intent.goal,
         visibility: 'public', optIn: intent.optIn, owner: addr(intent.owner), version: u64(intent.version), policyVersion: u64(intent.policyVersion),
         schemaVersion: u64(2), status: intent.status, direction: intent.semantics.direction, category: intent.semantics.category,
@@ -375,7 +382,8 @@ export function createArkivAdapter(config: { accessKey: string; now?: () => numb
       const candidate = await validateDiscoveredEntity(await client.getEntity(hex32.parse(entityKey) as Hex, PublicIntents), await client.getBlockNumber({ cacheTime: 0 }), now());
       const latest = await client.select().from(PublicIntents, { onMismatch: 'throw' }).ownedBy(candidate.owner).createdBy(candidate.owner)
         .where(eq('intentId', candidate.intent.intentId)).orderBy(desc('version')).limit(2).fetch();
-      if (!latest.entities.length || latest.skipped !== 0) throw safeFailure('Public intent is unavailable');
+      if (!latest.entities.length || latest.entities.length > 2 || latest.skipped !== 0) throw safeFailure('Public intent is unavailable');
+      if (latest.entities.length > 1 && typedValue(exactRecord(latest.entities[1]), 'version', 'u64') === BigInt(candidate.intent.version)) throw safeFailure('Duplicate public intent versions require reconciliation');
       for (const row of latest.entities) {
         const current = await decodeDiscoveredEntity(row, big(latest.blockNumber), now(), false);
         if (current.intent.version >= candidate.intent.version && intentDigest(current.intent) !== intentDigest(candidate.intent)) throw safeFailure('Public intent changed or closed');

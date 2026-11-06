@@ -56,32 +56,32 @@ function Problem() {
     <path className={styles.dotted} d="M220 145H237M303 145H320" />
     <circle className={styles.question} cx="270" cy="145" r="32" />
     <text className={styles.questionMark} x="270" y="154" textAnchor="middle">?</text>
-    <text className={styles.label} x="270" y="289" textAnchor="middle">But why connect?</text>
+    <text className={styles.label} x="270" y="269" textAnchor="middle" dominantBaseline="central">But why connect?</text>
   </>;
 }
 
 function Solution() {
   return <>
-    <ellipse className={styles.ground} cx="270" cy="270" rx="206" ry="20" />
+    <ellipse className={styles.ground} cx="270" cy="288" rx="214" ry="38" />
     <Note x={54} y={55} tilt={-8} heading="AN EXAMPLE INTENT" lines={['Find someone', 'to build with.']} />
     <Note x={329} y={55} tilt={8} heading="AN EXAMPLE INTENT" lines={['Meet a curious', 'collaborator.']} />
     <path className={styles.connector} d="M212 143H237M303 143H328" />
     <circle className={styles.accentDisc} cx="270" cy="143" r="34" />
     <circle className={styles.discRing} cx="259" cy="143" r="13" /><circle className={styles.discRing} cx="281" cy="143" r="13" />
-    <text className={styles.label} x="270" y="267" textAnchor="middle">A reason to begin.</text>
-    <text className={styles.small} x="270" y="293" textAnchor="middle">Then, a decision for each person.</text>
+    <text className={styles.label} x="270" y="276" textAnchor="middle" dominantBaseline="central">A reason to begin.</text>
+    <text className={styles.small} x="270" y="302" textAnchor="middle" dominantBaseline="central">Then, a decision for each person.</text>
   </>;
 }
 
 function Privacy() {
   return <>
-    <ellipse className={styles.ground} cx="268" cy="268" rx="207" ry="19" />
+    <ellipse className={styles.ground} cx="270" cy="308" rx="214" ry="18" />
     <g transform="translate(51 71) rotate(-6 80 80)">
       <path className={styles.bookEdge} d="M13 7H162V176H13Q1 176 1 164V19Q1 7 13 7Z" />
       <rect className={styles.book} width="155" height="170" rx="10" />
       <path className={styles.bookSeam} d="M18 0V170" />
       <LockKeyhole x={66} y={39} width={30} height={30} className={styles.lightIcon} aria-hidden="true" />
-      <text className={styles.lightText} x="86" y="104" textAnchor="middle">Private context</text>
+      <text className={styles.lightText} x="74" y="104" textAnchor="middle">Private context</text>
       <path className={styles.bookLines} d="M49 126H120M60 137H109" />
       <rect className={styles.bookBand} x="126" y="-1" width="10" height="172" rx="2" />
     </g>
@@ -96,7 +96,7 @@ function Privacy() {
       <text className={styles.small} x="78" y="121" textAnchor="middle">Public discovery</text>
       <path className={styles.faintRule} d="M38 142H118" />
     </g>
-    <text className={styles.label} x="270" y="295" textAnchor="middle">You choose what crosses the boundary.</text>
+    <text className={styles.label} x="270" y="308" textAnchor="middle" dominantBaseline="central">You choose what crosses the boundary.</text>
   </>;
 }
 

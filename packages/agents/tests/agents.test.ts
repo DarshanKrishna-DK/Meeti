@@ -116,6 +116,17 @@ describe("real provider adapter with test-only HTTP fixtures", () => {
     await expect(new OpenAICompatibleProvider({ ...config, maxCostUsd: 0.000001 }, transport).generate(request)).rejects.toMatchObject({ code: "budget" });
     expect(transport).not.toHaveBeenCalled();
   });
+  it("accounts for reported usage even when the completion fails task validation", async () => {
+    const transport = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      id: "test-only-invalid-usage", choices: [{ finish_reason: "stop", message: { content: '{"wrong":true}' } }],
+      usage: { prompt_tokens: 10_000_000, completion_tokens: 10 },
+    })));
+    const provider = new OpenAICompatibleProvider(config, transport);
+    await expect(provider.generate(request)).rejects.toMatchObject({ code: "budget" });
+    await expect(provider.generate(request)).rejects.toMatchObject({ code: "budget" });
+    expect(provider.usage.reservedCostUsd).toBeGreaterThan(config.maxCostUsd);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
   it("rejects provider errors without exposing their response body", async () => {
     const provider = new OpenAICompatibleProvider(config, async () => new Response("sensitive upstream error", { status: 401 }));
     await expect(provider.generate(request)).rejects.toThrow("HTTP 401");

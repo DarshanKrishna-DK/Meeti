@@ -12,7 +12,7 @@ vi.mock('../packages/server/policy', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/server/policy')>(),
   authority: providers.authority,
   arkiv: () => ({ readActive: providers.readActive }),
-  ai: () => ({ evaluateCompatibility: providers.evaluate, negotiateIntroduction: providers.negotiate }),
+  ai: () => ({ qualifyIntroduction: providers.negotiate }),
 }));
 vi.mock('../packages/server/discovery', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/server/discovery')>(),
@@ -61,9 +61,10 @@ async function pendingProposal() {
   const left = await ownerFixture('left'), right = await ownerFixture('right');
   const gate = deferred();
   providers.readActive.mockResolvedValue({ owner: right.agent.owner, intent: { intentId: right.intent.id, version: right.intent.version, ensAgentRef: right.agent.ensName } });
-  providers.fresh.mockImplementation(async () => { await gate.promise; return {}; });
+  let reads = 0;
+  providers.fresh.mockImplementation(async () => { if (++reads > 2) await gate.promise; return {}; });
   const response = call('proposals', { intentId: left.intent.id, candidateKey: right.intent.arkivKey }, left.cookie);
-  await vi.waitFor(() => expect(providers.fresh).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(providers.fresh).toHaveBeenCalledTimes(4));
   expect(agentRuns(left.id)[0]).toMatchObject({ status: 'running', stage: 'rechecking_permissions' });
   return { left, right, gate, response };
 }
@@ -84,7 +85,7 @@ beforeEach(() => {
   providers.authority.mockImplementation(async (userId: string) => agent(userId));
   providers.assess.mockResolvedValue({ eligible: true });
   providers.evaluate.mockResolvedValue({ output: { assessment: 'aligned', summary: 'Explicit local compatibility fixture' } });
-  providers.negotiate.mockResolvedValue({ exchanges: [], disclosureChecks: [] });
+  providers.negotiate.mockResolvedValue({ state: 'qualified', messages: [], ownerQuestions: [], answers: [], stopReason: 'mutual_criteria_supported' });
 });
 afterEach(() => {
   closeDatabase();

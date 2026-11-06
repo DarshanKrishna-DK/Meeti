@@ -1,0 +1,41 @@
+{
+  "reviewOnly": true,
+  "approvalState": "not_authorized_for_signature_or_broadcast",
+  "network": "Ethereum Sepolia",
+  "checkedAt": "2026-11-06T15:29:41.207Z",
+  "parent": {
+    "chainId": 11155111,
+    "parentName": "meeti-demo.eth",
+    "issuer": "0x9253705482a44e6A7378163e57cc791AE6213ed5",
+    "parentRegistry": "0xD4eBcbBdF463C9c45784603Db0dDD499BC44A8B4",
+    "subregistry": "0x7e53472471418b018c1Afabb178a680f37B8f399",
+    "predictedRegistry": "0x7e53472471418b018c1Afabb178a680f37B8f399",
+    "issuerRootRoles": "7719472615821079694904732333912527190217998977709370935963838933860875309329",
+    "nextStep": "ready",
+    "expiresAt": "2027-11-06T07:48:00.000Z",
+    "blockNumber": "12077451",
+    "parentControl": "The project operator retains its existing registry root powers. An owned token does not emancipate the subname."
+  },
+  "branch": {
+    "chainId": 11155111,
+    "from": "0x9253705482a44e6A7378163e57cc791AE6213ed5",
+    "to": "0x7e53472471418b018c1Afabb178a680f37B8f399",
+    "data": "0x85f3e64300000000000000000000000000000000000000000000000000000000000000c00000000000000000000000009253705482a44e6a7378163e57cc791ae6213ed5000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001111100000000000000000000000000001111000000000000000000000000000000000000000000000000000000000006cceb9b000000000000000000000000000000000000000000000000000000000000000057573657273000000000000000000000000000000000000000000000000000000",
+    "value": "0x0",
+    "operation": "issue-project-subname",
+    "ensName": "users.meeti-demo.eth",
+    "recipient": "0x9253705482a44e6A7378163e57cc791AE6213ed5",
+    "expiresAt": 1825487280,
+    "roleBitmap": "97433349568955200669315899115592731942240456704",
+    "blockNumber": "12077451",
+    "warning": "The project issuer pays testnet gas and retains its existing root permissions. The recipient owns the subname token. Resolver ownership and delegation require separate recipient-authorized setup. No sponsor authorization is implied by preparation."
+  },
+  "nextSteps": [
+    "Confirm the reviewed users branch receipt before preparing any dependent operation.",
+    "Deploy one official UserRegistry for users.meeti-demo.eth if none exists, initialized with project issuer root control, then attach it.",
+    "A user chooses an available normalized label and proves the recipient wallet. The sponsor can prepare an exclusively recipient-controlled registry and issue the username token with that child registry.",
+    "The recipient signs its networking child, dedicated resolver, public records and delegation operations. Ordinary EOA gas sponsorship for those recipient transactions is not implemented."
+  ],
+  "signaturesRequested": 0,
+  "transactionsSubmitted": 0
+}

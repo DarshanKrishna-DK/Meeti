@@ -6,6 +6,8 @@ import type { Profile } from '@/packages/shared/src';
 import { Button, Checkline, Field, Tag, api, type Shared } from './workspace-features';
 import { DraftConflict } from './draft-conflict';
 import { ContextLibrary } from './context-library';
+import { ProfileIntake } from './profile-intake';
+import { ProfileDetails } from './profile-details';
 import styles from './context-library.module.css';
 
 const publicFields = ['displayName', 'headline', 'bio', 'seeking', 'offering', 'tags'];
@@ -62,6 +64,7 @@ function AccountProfileEditor({ state, run, busy }: Shared) {
             <button className="text-link danger-text" type="button" onClick={() => update('socialLinks', (profile.socialLinks || []).filter((_, position) => position !== index))}>Remove link {index + 1}</button>
           </div>)}</div>
           <div className={styles.toolbar}><Button kind="secondary" disabled={(profile.socialLinks || []).length >= 6} onClick={() => update('socialLinks', [...(profile.socialLinks || []), { label: '', url: '' }])}>Add a link</Button><small>{(profile.socialLinks || []).length} of 6 links</small></div>
+          <ProfileDetails key={savedFingerprint} profile={profile} update={update} />
         </> : <>
           <h2>You choose what travels.</h2>
           <p>Only selected fields can appear in your public projection. Contact details and employer stay private.</p>
@@ -81,5 +84,5 @@ function AccountProfileEditor({ state, run, busy }: Shared) {
       <section className="panel preview-panel"><Tag><Globe2 size={14} /> Public profile preview</Tag><div className="avatar large">{profile.publicFields.includes('displayName') ? profile.displayName.slice(0, 1) || 'Y' : <Users size={29} aria-hidden="true" />}</div><h2>{profile.publicFields.includes('displayName') ? profile.displayName || 'Your name' : 'Your name is private.'}</h2><p>{profile.publicFields.includes('headline') ? profile.headline || 'Your introduction will appear here.' : 'Your headline is private.'}</p>{profile.publicFields.includes('bio') && <p>{profile.bio}</p>}{profile.publicFields.includes('seeking') && profile.seeking && <p><strong>Looking for:</strong> {profile.seeking}</p>}{profile.publicFields.includes('offering') && profile.offering && <p><strong>Can offer:</strong> {profile.offering}</p>}<div className="tags">{profile.publicFields.includes('tags') && profile.tags.filter(Boolean).map(topic => <Tag key={topic}>{topic}</Tag>)}</div></section>
       <section className="profile-privacy-note"><LockKeyhole size={23} /><h3>A private foundation.</h3><p>Your contacts, employer and conversations are never published to ENS or Arkiv. This preview reflects your current draft, not a public write.</p></section>
     </aside>
-  </div><ContextLibrary state={state} run={run} busy={busy} /></>;
+  </div><ProfileIntake state={state} run={run} busy={busy} draftConflict={conflict} onApply={suggestions => { if (conflict) return; if (!draft) setBase(savedFingerprint); setDraft({ ...profile, ...suggestions }); setStep(0); }} /><ContextLibrary state={state} run={run} busy={busy} /></>;
 }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { stringToHex } from 'viem';
-import { canonicalIntent, createArkivAdapter, intentSigningMessage, PublicIntentSchema, validateDiscoveredEntity, type PublicIntent } from './index';
+import { numberToHex, stringToHex } from 'viem';
+import { ARKIV_SCHEMA_NAME, canonicalIntent, createArkivAdapter, intentSigningMessage, PublicIntentSchema, validateDiscoveredEntity, type PublicIntent } from './index';
 
 const owner = privateKeyToAccount(generatePrivateKey());
 const other = privateKeyToAccount(generatePrivateKey());
@@ -168,5 +168,94 @@ describe('unsigned SDK transaction preparation', () => {
     const adapter = createArkivAdapter({ accessKey: 'local-test-fixture-key', now: () => current });
     await expect(adapter.preparePublish({ intent, signature, maxFeeWei: '1' })).rejects.toThrow('preparation failed');
     expect(methods.some(value => /send|sign/i.test(value))).toBe(false);
+  });
+  it('rejects a signed projection beyond its read budget before any RPC', async () => {
+    const methods = rpcFixture();
+    const fact = { value: 'r'.repeat(160), sourceQuote: 'e'.repeat(400) };
+    const { intent, signature } = await fixture({ ...initial, semantics: { ...initial.semantics,
+      topics: Array.from({ length: 8 }, () => ({ ...fact })), offers: Array.from({ length: 12 }, () => ({ ...fact })),
+      requirements: Array.from({ length: 12 }, () => ({ ...fact, kind: 'skill', strength: 'mandatory' })),
+    } });
+    expect(PublicIntentSchema.safeParse(intent).success).toBe(true);
+    await expect(createArkivAdapter({ accessKey: 'local-test-fixture-key', now: () => current })
+      .preparePublish({ intent, signature, maxFeeWei: '2000000' })).rejects.toThrow('byte limit');
+    expect(methods).toEqual([]);
+  });
+});
+
+describe('current Arkiv SDK discovery queries', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  function rpcEntity(row: Record<string, unknown>) {
+    const attributes = Object.entries(row).filter(([name]) => !name.startsWith('$')).map(([name, raw]) => {
+      const value = raw as { type: string; value: unknown };
+      return { name, type: value.type, value: typeof value.value === 'bigint' ? numberToHex(value.value) : value.value };
+    });
+    attributes.push({ name: 'arkiv.schema', type: 'str', value: ARKIV_SCHEMA_NAME });
+    return { key: row.$key, owner: row.$owner, creator: row.$creator, expiresAt: numberToHex(row.$expiresAt as bigint),
+      createdAt: '0x1', updatedAt: '0x1', creationFlags: 1, attributes };
+  }
+  function rpc(pages: Record<string, unknown>[][], selected?: Record<string, unknown>) {
+    const queries: { query: string; limit: string }[] = [];
+    vi.stubGlobal('fetch', async (_url: unknown, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      let result: unknown;
+      if (request.method === 'eth_chainId') result = '0x76edaf';
+      else if (request.method === 'eth_blockNumber') result = '0x3e8';
+      else if (request.method === 'arkiv_getEntity') result = selected ? rpcEntity(selected) : null;
+      else if (request.method === 'arkiv_query') {
+        queries.push({ query: request.params[0], limit: request.params[1].limit });
+        const rows = pages.shift();
+        if (!rows) throw new Error('Unexpected additional query in fixture');
+        result = { data: rows.map(rpcEntity), blockNumber: '0x3e8' };
+      } else throw new Error('Unexpected RPC method in discovery fixture');
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }), { headers: { 'content-type': 'application/json' } });
+    });
+    return queries;
+  }
+  const adapter = () => createArkivAdapter({ accessKey: 'local-test-fixture-key', now: () => current });
+  it('rejects same-version forks outside the original discovery filter', async () => {
+    const { row } = await fixture();
+    const { row: fork } = await fixture({ ...initial, summary: 'A different signed public fork.' });
+    fork.$key = `0x${'b'.repeat(64)}`;
+    const queries = rpc([[row], [row, fork]]);
+    expect(await adapter().discover({ goal: 'collaborator', includeDemo: true })).toMatchObject({ candidates: [], rejectedEntities: 1 });
+    expect(queries[1].limit).toBe('0x2');
+    expect(queries[1].query).not.toContain('goal =');
+    expect(queries[1].query).toContain('$creator = addr(');
+  });
+  it('rejects repeated same-version keys even when their signed payloads agree', async () => {
+    const { row } = await fixture();
+    const copy = { ...row, $key: `0x${'b'.repeat(64)}` };
+    rpc([[row, copy]], row);
+    await expect(adapter().readActive(String(row.$key))).rejects.toThrow('unavailable');
+  });
+  it('allows an unambiguous renewed version with its older predecessor', async () => {
+    const { row: prior } = await fixture();
+    const { row } = await fixture({ ...initial, version: 2 }); row.$key = `0x${'b'.repeat(64)}`;
+    rpc([[row, prior]], row);
+    expect((await adapter().readActive(String(row.$key))).intent.version).toBe(2);
+  });
+  it('suppresses an older active candidate after a newer signed app deadline expires', async () => {
+    const { row } = await fixture();
+    const { row: expired } = await fixture({ ...initial, version: 2, createdAt: new Date(current - 20_000).toISOString(), expiresAt: new Date(current - 1000).toISOString() });
+    rpc([[row], [expired, row]]);
+    expect((await adapter().discover({ includeDemo: true })).candidates).toEqual([]);
+  });
+  it('advances full pages by typed key while preserving bounded observation evidence', async () => {
+    const { row } = await fixture();
+    const rows = Array.from({ length: 100 }, (_, index) => ({ ...row, $key: `0x${(index + 1).toString(16).padStart(64, '0')}` }));
+    const queries = rpc([rows, []]);
+    const result = await adapter().discover({ includeDemo: true, excludeOwner: owner.address });
+    expect(result).toMatchObject({ candidates: [], truncated: false, observedBlocks: ['1000', '1000'] });
+    expect(queries[1].query).toContain(`$key > key(${rows[99].$key})`);
+    expect(queries[0].query).toContain('expiresAt > u64(');
+  });
+  it('reports truncation when the page budget is reached', async () => {
+    const { row } = await fixture();
+    const rows = Array.from({ length: 100 }, (_, index) => ({ ...row, $key: `0x${(index + 1).toString(16).padStart(64, '0')}` }));
+    rpc([rows]);
+    const result = await createArkivAdapter({ accessKey: 'local-test-fixture-key', now: () => current, maxPages: 1 })
+      .discover({ includeDemo: true, excludeOwner: owner.address });
+    expect(result.truncated).toBe(true);
   });
 });

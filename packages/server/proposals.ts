@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { agent, atomic, audit, db, intent, profile, proposal, type ProposalRow } from './db';
-import { decrypt, encrypt, hash, sign } from './crypto';
-import { ai, arkiv, assertIntent, authority, participant, policyDigest } from './policy';
+import { decrypt, encrypt, sign } from './crypto';
+import { ai, assertIntent, participant, policyDigest } from './policy';
 import { HttpError, requireValue } from './security';
 import type { Room } from '../shared/src';
 import { hasCurrentWorldVerification } from './world-store';
 import { requireWorldCapability, worldEnabled } from './capabilities';
-import { assessPair, freshPublicIntent } from './discovery';
+import { freshPublicIntent } from './discovery';
 import type { RunningStage } from './agent-runs';
 import { privateSnapshotDigest } from './context-policy';
+import { startQualification } from './qualifications';
 
 export function ownedProposal(userId: string, id: string) {
   const p = requireValue(proposal(id), 'Introduction request was not found.', 404);
@@ -50,56 +51,7 @@ export function requireBothConsents(p: NonNullable<ReturnType<typeof proposal>>)
   if (latestConsents(p).some(c => c?.decision !== 'approve' || c.digest !== p.row.digest)) throw new HttpError(403, 'MUTUAL_CONSENT_REQUIRED', 'Both people must independently approve this introduction.');
 }
 export async function createProposal(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void, progress: (stage: RunningStage) => void = () => {}) {
-  const own = requireValue(intent(ownIntentId), 'Choose an active networking intent.');
-  if (own.userId !== userId) throw new HttpError(404, 'NOT_FOUND', 'Networking intent was not found.');
-  assertIntent(own.value);
-  await authority(userId, 'negotiate', own.value.policyVersion);
-  const candidate = await arkiv().readActive(candidateKey);
-  const other = requireValue(intent(candidate.intent.intentId), 'This external agent is discoverable, but it has not connected an introduction inbox to Meeti.', 409);
-  if (other.userId === userId || candidate.intent.version !== other.value.version || other.value.arkivKey?.toLowerCase() !== candidateKey.toLowerCase()) throw new HttpError(409, 'CANDIDATE_CHANGED', 'The candidate intent has changed. Refresh discovery.');
-  assertIntent(other.value);
-  const a = requireValue(agent(userId), 'Set up your agent.');
-  const b = requireValue(agent(other.userId), 'The candidate agent is unavailable.');
-  if (b.owner.toLowerCase() !== candidate.owner.toLowerCase() || b.ensName !== candidate.intent.ensAgentRef
-    || own.value.goal !== other.value.goal) throw new HttpError(409, 'INCOMPATIBLE', 'These intents do not meet the networking filters.');
-  if (db().prepare('SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)').get(userId, other.userId, other.userId, userId)) throw new HttpError(403, 'BLOCKED', 'This candidate is blocked.');
-  await authority(other.userId, 'negotiate', other.value.policyVersion);
-  const semanticAssessment = await assessPair(userId, own.value, other.userId, other.value);
-  const leftProfileDigest = privateSnapshotDigest(userId), rightProfileDigest = privateSnapshotDigest(other.userId);
-  const pairKey = [own.value.id + ':' + own.value.version, other.value.id + ':' + other.value.version].sort().join('|') + '|' + [a.policy.version, b.policy.version].sort().join(':') + '|' + [leftProfileDigest, rightProfileDigest].sort().join(':');
-  const existing = db().prepare('SELECT id FROM proposals WHERE pair_key=?').get(pairKey) as { id: string } | undefined;
-  if (existing) return { id: existing.id };
-  const service = ai();
-  const input = { left: participant(userId, own.value), right: participant(other.userId, other.value), purpose: own.value.goal };
-  progress('evaluating_fit');
-  const result = await service.evaluateCompatibility(input);
-  if (result.output.assessment === 'not_aligned') { audit(userId, 'evaluate', 'not_aligned', 'The model found insufficient mutual fit.'); return { assessment: result.output, id: null }; }
-  progress('exchanging_context');
-  const exchange = await service.negotiateIntroduction({ ...input, maxRounds: 1 });
-  progress('rechecking_permissions');
-  await Promise.all([freshPublicIntent(userId, own.value, 'negotiate'), freshPublicIntent(other.userId, other.value, 'negotiate')]);
-  const value = { leftIntent: own.value, rightIntent: other.value, leftPolicy: a.policy, rightPolicy: b.policy, leftProfileDigest, rightProfileDigest,
-    leftAgent: a.id, rightAgent: b.id, summary: result.output.summary, compatibility: { ...result, semanticAssessment },
-    exchanges: [ ...exchange.exchanges.map(x => ({ speaker: x.agentId === a.id ? a.ensName : b.ensName, content: x.message, allowed: true })),
-      ...exchange.disclosureChecks.map(x => ({ speaker: 'Disclosure policy', content: `Requested field: ${x.fieldId}`, allowed: x.allowed, reason: x.reason })),
-      { speaker: 'Disclosure policy', content: 'Private contact and employer fields are withheld.', allowed: false, reason: 'Human approval and protected release are required.' } ], createdAt: new Date().toISOString() };
-  return atomic(() => {
-    checkSession();
-    progress('rechecking_permissions');
-    const currentA = agent(userId), currentB = agent(other.userId);
-    if (!currentA || !currentB || policyDigest(currentA.policy) !== policyDigest(a.policy) || policyDigest(currentB.policy) !== policyDigest(b.policy)) throw new HttpError(409, 'POLICY_CHANGED', 'Permissions changed during evaluation.');
-    if (privateSnapshotDigest(userId) !== leftProfileDigest || privateSnapshotDigest(other.userId) !== rightProfileDigest) throw new HttpError(409, 'PROFILE_CHANGED', 'A profile changed during evaluation.');
-    const left = requireValue(intent(own.value.id), 'Intent unavailable.'), right = requireValue(intent(other.value.id), 'Intent unavailable.');
-    assertIntent(left.value); assertIntent(right.value);
-    if (left.value.version !== own.value.version || right.value.version !== other.value.version) throw new HttpError(409, 'INTENT_CHANGED', 'An intent changed during evaluation.');
-    const prior = db().prepare('SELECT id FROM proposals WHERE pair_key=?').get(pairKey) as { id: string } | undefined;
-    if (prior) return { id: prior.id };
-    const id = randomUUID();
-    const digest = hash(JSON.stringify({ pairKey, left: userId, right: other.userId, value }));
-    db().prepare('INSERT INTO proposals VALUES(?,?,?,?,?,?,?)').run(id, userId, other.userId, pairKey, 'proposed', digest, encrypt(value, `proposal:${id}`));
-    audit(userId, 'proposal', 'created', `Introduction request ${id}`); audit(other.userId, 'proposal', 'received', `Introduction request ${id}`);
-    return { id };
-  });
+  return startQualification(userId, ownIntentId, candidateKey, checkSession, progress);
 }
 export async function consent(userId: string, id: string, decision: 'approve' | 'decline' | 'revoke') {
   const p = ownedProposal(userId, id);

@@ -7,6 +7,7 @@ import { sepolia } from "viem/chains";
 import { z } from "zod";
 import { factoryAbi, registryAbi, registryInitAbi, resolverAbi, textProfileAbi, universalAbi } from "./abi";
 import { createEnsReadTransport } from "./rpc-transport";
+import { validatePublicAgentRecordKey, validatePublicAgentRecordValue, type EnsPublicRecords } from "./agent-records";
 
 export const ENS_CHAIN_ID = 11155111;
 export const ENS_DEPLOYMENT = {
@@ -30,7 +31,7 @@ const policyActionSchema = z.enum(["discover", "publish", "evaluate", "negotiate
 export const inlinePolicySchema = z.object({
   version: z.number().int().positive().safe(),
   purpose: z.enum(["cofounder", "collaborator", "mentor", "teammate"]),
-  allowedFields: z.array(z.enum(["displayName", "headline", "bio", "offering", "seeking", "tags", "contact", "employer", "socialLinks", "documentContext"])).max(10).refine((values) => new Set(values).size === values.length),
+  allowedFields: z.array(z.enum(["displayName", "headline", "bio", "offering", "seeking", "tags", "contact", "employer", "socialLinks", "documentContext", "profileContext"])).max(11).refine((values) => new Set(values).size === values.length),
   allowedActions: z.array(policyActionSchema).min(1).max(6).refine((values) => new Set(values).size === values.length),
   expiresAt: z.string().datetime({ offset: true }),
   paused: z.boolean(),
@@ -122,6 +123,18 @@ export interface EnsProviderOptions {
   namespace?: EnsNamespaceBinding;
   client?: PublicClient;
   now?: () => number;
+}
+export interface EnsPublicRecordPrepareRequest {
+  ensName: string; owner: string; key: string; value: string;
+}
+export interface EnsProjectSubnameRequest {
+  parentName: string; label: string; issuer: string; recipient: string; expiresAt: number;
+  recipientSubregistry?: string;
+}
+export function normalizeProjectLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  requireCondition(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(normalized), "invalid_project_subname_label");
+  return normalized;
 }
 
 function same(a: string, b: string) { return a.toLowerCase() === b.toLowerCase(); }
@@ -366,6 +379,143 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
     return result;
   }
 
+  async function readPublicAgentRecords(input: { ensName: string; owner?: string; keys: string[] }): Promise<EnsPublicRecords> {
+    validateAgentName(input.ensName);
+    requireCondition(input.keys.length <= 8 && new Set(input.keys).size === input.keys.length, "invalid_public_agent_record_keys");
+    input.keys.forEach(validatePublicAgentRecordKey);
+    const ctx = await context();
+    const location = await ctx.locate(input.ensName);
+    const owner = getAddress(location.state.latestOwner);
+    if (input.owner) requireCondition(same(owner, getAddress(input.owner)), "namespace_owner_mismatch");
+    const resolver = await ctx.read<Address>(location.registry, registryAbi, "getResolver", [location.label]);
+    await ctx.verifyProxy(resolver, ENS_DEPLOYMENT.resolverImplementation);
+    const predicted = await ctx.read<Address>(ENS_DEPLOYMENT.factory, factoryAbi, "predictProxyAddress", [owner, dedicatedResolverSalt(input.ensName, owner)]);
+    requireCondition(same(predicted, resolver), "dedicated_resolver_required");
+    const [ownerRoles, rootCount, recordId] = await Promise.all([
+      ctx.read<bigint>(resolver, resolverAbi, "roles", [0n, owner]),
+      ctx.read<bigint>(resolver, resolverAbi, "roleCount", [0n]),
+      ctx.read<bigint>(resolver, resolverAbi, "getRecordId", [namehash(input.ensName)]),
+    ]);
+    requireCondition((ownerRoles & (TEXT_ROLE | TEXT_ADMIN)) === (TEXT_ROLE | TEXT_ADMIN) && rootCount === ownerRoles, "resolver_root_control_not_exclusive");
+    requireCondition(recordId > 0n, "dedicated_record_required");
+    const records: Record<string, string> = {};
+    for (const key of input.keys) {
+      requireCondition(await ctx.read<bigint>(resolver, resolverAbi, "roleCount", [textResource(key)]) === 0n, "public_agent_record_not_owner_exclusive");
+      const profile = encodeFunctionData({ abi: textProfileAbi, functionName: "text", args: [namehash(input.ensName), key] });
+      const encoded = await ctx.read<Hex>(resolver, resolverAbi, "resolve", [dnsEncode(input.ensName), profile]);
+      const value = decodeFunctionResult({ abi: textProfileAbi, functionName: "text", data: encoded });
+      requireCondition(value.length <= 16384, "public_agent_record_too_large");
+      records[key] = value;
+    }
+    requireCondition(Math.abs(now() / 1000 - Number(ctx.block.timestamp)) < 90, "stale_chain_head");
+    return { chainId: ENS_CHAIN_ID, ensName: input.ensName, owner, registry: location.registry, resolver, blockNumber: ctx.blockNumber.toString(), blockTimestamp: Number(ctx.block.timestamp), checkedAt: new Date(now()).toISOString(), expiresAt: new Date(location.expiry * 1000).toISOString(), records };
+  }
+
+  async function preparePublicAgentRecord(input: EnsPublicRecordPrepareRequest) {
+    const value = validatePublicAgentRecordValue(input.key, input.value, input.ensName);
+    const current = await readPublicAgentRecords({ ensName: input.ensName, owner: input.owner, keys: [input.key] });
+    const data = setTextData(input.ensName, input.key, value);
+    requireCondition(client, "ens_rpc_not_configured");
+    await client.call({ account: current.owner, to: current.resolver, data, value: 0n, blockNumber: BigInt(current.blockNumber) });
+    requireCondition(Math.abs(now() / 1000 - current.blockTimestamp) < 90, "public_record_preparation_stale");
+    return { chainId: ENS_CHAIN_ID, from: current.owner, to: current.resolver, data, value: "0x0" as const, operation: "set-public-agent-record" as const, ensName: input.ensName, key: input.key, publicValue: value, blockNumber: current.blockNumber, warning: "This reviewed value becomes public on Sepolia. Owner wallet review and a separate signature authorization are required. This record does not grant application permissions." };
+  }
+
+  async function inspectProjectParent(input: { parentName: string; issuer: string }) {
+    validateAgentName("candidate." + input.parentName);
+    const issuer = getAddress(input.issuer);
+    const ctx = await context();
+    const parent = await ctx.locate(input.parentName);
+    requireCondition(same(parent.state.latestOwner, issuer), "project_parent_owner_mismatch");
+    const subregistry = await ctx.read<Address>(parent.registry, registryAbi, "getSubregistry", [parent.label]);
+    const predicted = await ctx.read<Address>(ENS_DEPLOYMENT.factory, factoryAbi, "predictProxyAddress", [issuer, registrySalt(input.parentName)]);
+    let nextStep: "ready" | "deploy-registry" | "set-subregistry";
+    let issuerRootRoles = 0n;
+    if (same(subregistry, zeroAddress)) {
+      const code = await client!.getCode({ address: predicted, blockNumber: ctx.blockNumber });
+      if (code && code !== "0x") { await ctx.verifyProxy(predicted, ENS_DEPLOYMENT.registryImplementation); nextStep = "set-subregistry"; }
+      else nextStep = "deploy-registry";
+    } else {
+      await ctx.verifyProxy(subregistry, ENS_DEPLOYMENT.registryImplementation);
+      issuerRootRoles = await ctx.read<bigint>(subregistry, registryAbi, "roles", [0n, issuer]);
+      requireCondition((issuerRootRoles & 1n) === 1n, "project_issuer_registrar_role_missing");
+      nextStep = "ready";
+    }
+    requireCondition(Math.abs(now() / 1000 - Number(ctx.block.timestamp)) < 90, "stale_chain_head");
+    return { chainId: ENS_CHAIN_ID, parentName: input.parentName, issuer, parentRegistry: parent.registry, subregistry, predictedRegistry: predicted, issuerRootRoles: issuerRootRoles.toString(), nextStep, expiresAt: new Date(parent.expiry * 1000).toISOString(), blockNumber: ctx.blockNumber.toString(), parentControl: "The project operator retains its existing registry root powers. An owned token does not emancipate the subname." };
+  }
+
+  async function prepareProjectSubname(input: EnsProjectSubnameRequest) {
+    requireCondition(normalizeProjectLabel(input.label) === input.label, "project_label_must_be_normalized");
+    const ensName = validateAgentName(input.label + "." + input.parentName);
+    const issuer = getAddress(input.issuer);
+    const recipient = getAddress(input.recipient);
+    requireCondition(!same(recipient, zeroAddress), "project_recipient_required");
+    const parent = await inspectProjectParent(input);
+    requireCondition(parent.nextStep === "ready", "project_parent_setup_required");
+    const ctx = await context();
+    const currentParent = await ctx.locate(input.parentName);
+    requireCondition(same(currentParent.state.latestOwner, issuer), "project_parent_owner_mismatch");
+    const attached = await ctx.read<Address>(currentParent.registry, registryAbi, "getSubregistry", [currentParent.label]);
+    requireCondition(same(attached, parent.subregistry), "project_parent_changed");
+    await ctx.verifyProxy(attached, ENS_DEPLOYMENT.registryImplementation);
+    const roles = await ctx.read<bigint>(attached, registryAbi, "roles", [0n, issuer]);
+    requireCondition((roles & 1n) === 1n, "project_issuer_registrar_role_missing");
+    const target = await ctx.read<{ status: number; expiry: bigint }>(attached, registryAbi, "getState", [labelId(input.label)]);
+    requireCondition(target.status === 0 && target.expiry === 0n, "project_subname_not_unused");
+    requireCondition(Number.isSafeInteger(input.expiresAt) && input.expiresAt > Number(ctx.block.timestamp) && input.expiresAt <= currentParent.expiry, "invalid_namespace_expiry");
+    const recipientSubregistry = input.recipientSubregistry ? getAddress(input.recipientSubregistry) : zeroAddress;
+    if (!same(recipientSubregistry, zeroAddress)) {
+      await ctx.verifyProxy(recipientSubregistry, ENS_DEPLOYMENT.registryImplementation);
+      const [recipientRoles, rootCount, issuerRoles] = await Promise.all([
+        ctx.read<bigint>(recipientSubregistry, registryAbi, "roles", [0n, recipient]),
+        ctx.read<bigint>(recipientSubregistry, registryAbi, "roleCount", [0n]),
+        ctx.read<bigint>(recipientSubregistry, registryAbi, "roles", [0n, issuer]),
+      ]);
+      requireCondition(recipientRoles === ALL_ROLES && rootCount === recipientRoles && (same(recipient, issuer) || issuerRoles === 0n), "recipient_registry_control_not_exclusive");
+    }
+    const data = encodeFunctionData({ abi: registryAbi, functionName: "register", args: [input.label, recipient, recipientSubregistry, zeroAddress, NAME_OWNER_ROLES, BigInt(input.expiresAt)] });
+    await client!.call({ account: issuer, to: attached, data, value: 0n, blockNumber: ctx.blockNumber });
+    requireCondition(Math.abs(now() / 1000 - Number(ctx.block.timestamp)) < 90, "stale_chain_head");
+    return { chainId: ENS_CHAIN_ID, from: issuer, to: attached, data, value: "0x0" as const, operation: "issue-project-subname" as const, ensName, recipient, expiresAt: input.expiresAt, roleBitmap: NAME_OWNER_ROLES.toString(), blockNumber: ctx.blockNumber.toString(), warning: "The project issuer pays testnet gas and retains its existing root permissions. The recipient owns the subname token. Resolver ownership and delegation require separate recipient-authorized setup. No sponsor authorization is implied by preparation." };
+  }
+
+  async function prepareProjectRecipientRegistry(input: { parentName: string; label: string; issuer: string; recipient: string }) {
+    requireCondition(normalizeProjectLabel(input.label) === input.label, "project_label_must_be_normalized");
+    const ensName = validateAgentName(input.label + "." + input.parentName);
+    const issuer = getAddress(input.issuer);
+    const recipient = getAddress(input.recipient);
+    requireCondition(!same(recipient, zeroAddress), "project_recipient_required");
+    const parent = await inspectProjectParent(input);
+    requireCondition(parent.nextStep === "ready", "project_parent_setup_required");
+    const ctx = await context();
+    const attachedParent = await ctx.locate(input.parentName);
+    requireCondition(same(attachedParent.state.latestOwner, issuer), "project_parent_owner_mismatch");
+    const attached = await ctx.read<Address>(attachedParent.registry, registryAbi, "getSubregistry", [attachedParent.label]);
+    requireCondition(same(attached, parent.subregistry), "project_parent_changed");
+    const issuerRoles = await ctx.read<bigint>(attached, registryAbi, "roles", [0n, issuer]);
+    requireCondition((issuerRoles & 1n) === 1n, "project_issuer_registrar_role_missing");
+    const state = await ctx.read<{ status: number; expiry: bigint }>(attached, registryAbi, "getState", [labelId(input.label)]);
+    requireCondition(state.status === 0 && state.expiry === 0n, "project_subname_not_unused");
+    const salt = BigInt(keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "bytes32" }, { type: "address" }], [keccak256(stringToHex("MeetiRecipientRegistry:v1")), namehash(ensName), recipient])));
+    const predictedAddress = await ctx.read<Address>(ENS_DEPLOYMENT.factory, factoryAbi, "predictProxyAddress", [issuer, salt]);
+    const code = await client!.getCode({ address: predictedAddress, blockNumber: ctx.blockNumber });
+    if (code && code !== "0x") {
+      await ctx.verifyProxy(predictedAddress, ENS_DEPLOYMENT.registryImplementation);
+      const [roles, rootCount] = await Promise.all([
+        ctx.read<bigint>(predictedAddress, registryAbi, "roles", [0n, recipient]),
+        ctx.read<bigint>(predictedAddress, registryAbi, "roleCount", [0n]),
+      ]);
+      requireCondition(roles === ALL_ROLES && rootCount === roles, "recipient_registry_control_not_exclusive");
+      return { needed: false as const, chainId: ENS_CHAIN_ID, ensName, issuer, recipient, predictedAddress, blockNumber: ctx.blockNumber.toString(), reason: "verified_recipient_registry_already_exists" };
+    }
+    const init = encodeFunctionData({ abi: registryInitAbi, functionName: "initialize", args: [[{ account: recipient, roleBitmap: ALL_ROLES }]] });
+    const data = encodeFunctionData({ abi: factoryAbi, functionName: "deployProxy", args: [ENS_DEPLOYMENT.registryImplementation, salt, init] });
+    await client!.call({ account: issuer, to: ENS_DEPLOYMENT.factory, data, value: 0n, blockNumber: ctx.blockNumber });
+    requireCondition(Math.abs(now() / 1000 - Number(ctx.block.timestamp)) < 90, "stale_chain_head");
+    return { needed: true as const, chainId: ENS_CHAIN_ID, from: issuer, to: ENS_DEPLOYMENT.factory, data, value: "0x0" as const, operation: "deploy-recipient-registry" as const, ensName, issuer, recipient, predictedAddress, blockNumber: ctx.blockNumber.toString(), warning: "The project issuer pays testnet gas. Initialization grants all registry root roles exclusively to the recipient. The issuer receives no role. Recipient signatures are required for subsequent child registration and resolver administration." };
+  }
+
   async function confirmTransaction(input: { hash: Hex; expectedFrom: Address; expectedTo: Address; expectedData: Hex }) {
     requireCondition(client, "ens_rpc_not_configured");
     await context();
@@ -384,7 +534,7 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
       else if (transport?.getSocket) (await transport.getSocket()).close();
     } catch { /* Cleanup must not replace a fail-closed result or expose endpoint credentials. */ }
   }
-  return { checkAuthority, prepareTransaction, confirmTransaction, disconnect };
+  return { checkAuthority, prepareTransaction, readPublicAgentRecords, preparePublicAgentRecord, inspectProjectParent, prepareProjectSubname, prepareProjectRecipientRegistry, confirmTransaction, disconnect };
 }
 
 export async function verifyEnsIndependently(options: Pick<EnsProviderOptions, "rpcUrl" | "client" | "now">, request: EnsAuthorityRequest) {

@@ -45,7 +45,7 @@ export async function rankCandidates(input: {
   const candidates = input.candidates.map(value => participantSchema.parse(value));
   const now = input.now ?? Date.now(); const maxAge = input.authorityMaxAgeMs ?? 60_000; const threshold = input.minCosine ?? 0.65;
   if (!Number.isFinite(now) || !Number.isInteger(maxAge) || maxAge < 1 || maxAge > 60_000 || !Number.isFinite(threshold) || threshold < -1 || threshold > 1) throw new MatchingError("input", "Matching time, authority age, or similarity threshold is invalid.");
-  const current = (value: MatchingParticipant) => value.authority.allowed && Date.parse(value.authority.checkedAt) <= now + 1000 && now - Date.parse(value.authority.checkedAt) <= maxAge && Date.parse(value.expiresAt) > now;
+  const current = (value: MatchingParticipant, at = now) => value.authority.allowed && Date.parse(value.authority.checkedAt) <= at + 1000 && at - Date.parse(value.authority.checkedAt) <= maxAge && Date.parse(value.expiresAt) > at;
   const sourceIdentity = `${source.owner.toLowerCase()}:${source.intentId}`;
   const identities = new Map<string, number>(); const keys = new Map<string, number>();
   for (const candidate of candidates) {
@@ -85,11 +85,24 @@ export async function rankCandidates(input: {
       const result = batch[index].result; const cosine = cosineSimilarity(output.vectors[0], output.vectors[index + 1]);
       const missingPreferred = result.requirementChecks.some(value => value.strength === "preferred" && !value.supported);
       result.cosine = cosine; result.embedding = output.receipt;
+      const completedAt = input.now ?? Date.now();
+      if (!current(source, completedAt) || !current(batch[index].candidate, completedAt)) {
+        result.reasons.push("Current authority or intent expiry elapsed during semantic inference. Refresh both participants before matching.");
+        continue;
+      }
       result.state = cosine >= threshold ? (missingPreferred ? "possible-match" : "match") : "no-match";
       result.eligible = cosine >= threshold;
       result.reasons.push("The relationship directions are complementary and deterministic gates passed.");
       result.reasons.push(cosine >= threshold ? "Semantic similarity meets the configured advisory threshold." : "Semantic similarity is below the configured advisory threshold.");
       if (missingPreferred) result.reasons.push("At least one preferred requirement lacks explicit counterpart offer evidence.");
+    }
+  }
+  // A later batch can outlive a receipt accepted by an earlier batch.
+  const completedAt = input.now ?? Date.now();
+  for (const { candidate, result } of pending) {
+    if (result.eligible && (!current(source, completedAt) || !current(candidate, completedAt))) {
+      result.state = "no-match"; result.eligible = false;
+      result.reasons.push("Current authority or intent expiry elapsed before ranking completed. Refresh both participants before matching.");
     }
   }
   return results.sort((a, b) => Number(b.eligible) - Number(a.eligible) || (b.cosine ?? -2) - (a.cosine ?? -2) || (b.preferenceFraction ?? -1) - (a.preferenceFraction ?? -1) || a.arkivKey.localeCompare(b.arkivKey));

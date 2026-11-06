@@ -19,6 +19,7 @@
     "onboarding:fresh": "node scripts/fresh-onboarding.mjs",
     "seed": "tsx --env-file=.env.local scripts/seed.ts",
     "arkiv:query": "tsx --env-file=.env.local arkiv/query.ts",
+    "worker:discovery": "tsx --env-file=.env.local scripts/discovery-worker.ts",
     "check:secrets": "node scripts/secret-scan.mjs",
     "demo:doctor": "tsx --env-file=.env.local scripts/demo-doctor.ts",
     "matching:live": "tsx --env-file=.env.local packages/matching/evaluate-live.ts",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
+    "@supabase/supabase-js": "2.119.0",
     "lucide-react": "^0.552.0",
     "next": "^16.0.0",
     "pdf-parse": "2.4.5",

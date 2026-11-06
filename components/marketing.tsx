@@ -15,18 +15,20 @@ const foundations = [
   { text: 'Mutual permission', mark: 'join' },
 ] as const;
 
+const foundationIcons = {
+  fold: Handshake,
+  weave: Fingerprint,
+  orbit: Compass,
+  join: ShieldCheck,
+} as const;
+
 function FoundationMark({ kind }: { kind: typeof foundations[number]['mark'] }) {
-  return <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-    {kind === 'fold' && <><path d="M8 32 27 8l10 24-10 24Z"/><path d="m27 8 29 24-29 24 10-24Z"/><path d="M8 32h48"/></>}
-    {kind === 'weave' && <><path d="M14 9c32 0 4 46 36 46M27 9c32 0 4 46 23 46M14 9C-5 9 23 55 14 55M27 9C8 9 36 55 27 55"/><path d="M9 19h43M12 32h40M12 45h43"/></>}
-    {kind === 'orbit' && <><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(-38 32 32)"/><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(38 32 32)"/><path d="m32 21 9 11-9 11-9-11Z"/></>}
-    {kind === 'join' && <><path d="M32 12C5-3 4 48 32 52M32 12c27-15 28 36 0 40"/><path d="M32 12C18 21 18 43 32 52M32 12c14 9 14 31 0 40"/><path d="M12 32h40"/></>}
-  </svg>;
+  const Icon = foundationIcons[kind];
+  return <Icon aria-hidden="true" focusable="false" />;
 }
 
 function FoundationsBelt() {
-  const [paused, setPaused] = useState(false);
-  return <section className="foundations-belt" aria-label="Product foundations" data-paused={paused}>
+  return <section className="foundations-belt" aria-label="Product foundations">
     <div className="foundations-window">
       <div className="foundations-track">
         {[false, true].map(repeat => <ul className="foundations-sequence" key={String(repeat)} aria-hidden={repeat || undefined}>
@@ -34,7 +36,6 @@ function FoundationsBelt() {
         </ul>)}
       </div>
     </div>
-    <button className="belt-control" type="button" onClick={() => setPaused(!paused)} aria-label={paused ? 'Play the decorative foundations belt' : 'Pause the decorative foundations belt'}>{paused ? 'Play' : 'Pause'}</button>
   </section>;
 }
 

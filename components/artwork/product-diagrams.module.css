@@ -21,7 +21,7 @@
 .bookEdge{fill:var(--surface-tint);stroke:var(--accent);stroke-width:1.5}
 .bookSeam{fill:none;stroke:var(--accent);stroke-width:1}
 .lightIcon{color:#fff1f3;stroke-width:1.4}
-.lightText{fill:#fff1f3;font-size:14px}
+.lightText{fill:#fff1f3;font-size:12px}
 .bookLines{fill:none;stroke:var(--rose);stroke-width:1.5;stroke-linecap:round}
 .bookBand{fill:var(--mi-mid-fill, #594451)}
 .boundary{fill:none;stroke:var(--line);stroke-width:1;stroke-dasharray:4 5}

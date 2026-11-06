@@ -7,6 +7,7 @@ import type { Goal, Intent } from '@/packages/shared/src';
 import type { IntentSemantics } from '@/packages/matching/src/semantics';
 import { normalizeTopics } from '@/packages/shared/src/topics';
 import { Button, Checkline, Field, Tag, api, renewWalletPermission, submitTransaction, wallet, type Shared } from './workspace-features';
+import { DiscoverySchedule } from './discovery-schedule';
 
 type PreparedPublication = { intentId: string; operationId: string; transaction: { request: Record<string, unknown>; expiresAt: string; maximumFeeWei: string } };
 const purposes: Goal[] = ['cofounder', 'collaborator', 'mentor', 'teammate'];
@@ -64,6 +65,7 @@ export function Intents({ state, run, busy }: Shared) {
   }
 
   return <>
+    <DiscoverySchedule state={state} run={run} busy={busy} />
     <ol className="intent-workflow" aria-label="Intent publication steps"><li><span>1</span><div><strong>Shape the intention</strong><small>Private text, with your AI consent</small></div></li><li><span>2</span><div><strong>Review what travels</strong><small>Explicit public fields and expiry</small></div></li><li><span>3</span><div><strong>Approve the publication</strong><small>A separate wallet transaction</small></div></li></ol>
     <div className="editor-grid intent-composition">
       <section className="panel form-panel" id="intent-composer" tabIndex={-1}>

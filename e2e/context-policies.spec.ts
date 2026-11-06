@@ -317,15 +317,7 @@ test('fits the public hero at desktop sizes and retains a seamless controllable 
     return { start, middle };
   });
   expect(leftward.middle).toBeLessThan(leftward.start);
-  const pause = belt.getByRole('button', { name: 'Pause the decorative foundations belt', exact: true });
-  await pause.click();
-  await expect(belt).toHaveAttribute('data-paused', 'true');
-  await belt.getByRole('button', { name: 'Play the decorative foundations belt', exact: true }).click();
-  await expect(belt).toHaveAttribute('data-paused', 'false');
-  await pause.focus();
-  await expect.poll(() => track.evaluate(element => getComputedStyle(element).animationPlayState)).toBe('paused');
-  await page.keyboard.press('Enter');
-  await expect(belt).toHaveAttribute('data-paused', 'true');
+  await expect(belt.getByRole('button')).toHaveCount(0);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect.poll(() => track.evaluate(element => getComputedStyle(element).animationName)).toBe('none');
   for (const width of [320, 390]) {

@@ -46,7 +46,6 @@ test('explains permission stages with keyboard controls without invoking applica
   await page.keyboard.press('End');
   await expect(figure).toHaveAttribute('data-explanation-stage', '3');
   await expect(figure.getByText('The final door stays locked.', { exact: true })).toBeVisible();
-  await expect(figure.getByText('Illustration, not live activity.', { exact: true })).toBeVisible();
   await expect(figure.getByText('Locked: World verification paused', { exact: true })).toBeVisible();
   await expect(figure.locator('[data-part-group="shutter"]').first()).toHaveAttribute('transform', 'translate(0 0)');
   await page.keyboard.press('Home');
@@ -117,6 +116,5 @@ test('uses a genuine available WebGL context and preserves the SVG explanation a
   await expect(figure.getByRole('img')).toBeVisible();
   await figure.getByRole('tab', { name: /Protected intro/ }).click();
   await expect(figure.getByText('The final door stays locked.', { exact: true })).toBeVisible();
-  await expect(figure.getByText('Illustration, not live activity.', { exact: true })).toBeVisible();
   await figure.screenshot({ path: resolve(screenshotDirectory, 'instrument-context-loss-fallback-desktop.png'), animations: 'disabled' });
 });

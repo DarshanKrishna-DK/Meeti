@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { encodeAbiParameters, type Address, type PublicClient } from "viem";
-import { createEnsAuthorityProvider, encodeInlinePolicyUri, ENS_DEPLOYMENT, evaluatePublicPolicy, inlinePolicyDigest, POLICY_KEY, publicPolicySchema, STATUS_KEY, textResource, validateAgentName, verifyEnsIndependently, type EnsPublicPolicy } from "./index";
+import { decodeFunctionData, encodeAbiParameters, keccak256, stringToHex, type Address, type PublicClient } from "viem";
+import { createEnsAuthorityProvider, encodeInlinePolicyUri, ENS_DEPLOYMENT, evaluatePublicPolicy, inlinePolicyDigest, normalizeProjectLabel, POLICY_KEY, publicPolicySchema, STATUS_KEY, textResource, validateAgentName, verifyEnsIndependently, type EnsPublicPolicy } from "./index";
+import { registryAbi, registryInitAbi, factoryAbi } from "./abi";
 
 const owner = "0x0000000000000000000000000000000000000001" as Address;
 const delegate = "0x0000000000000000000000000000000000000002" as Address;
@@ -169,5 +170,60 @@ describe("ENSv2 authoritative checks", () => {
     for (const name of ["alice.eth", "Agent.alice.eth", "agent..eth", "agent.alice.com"]) expect(() => validateAgentName(name)).toThrow();
     expect(publicPolicySchema.safeParse({ ...policy, privateEmail: "private@example.org" }).success).toBe(false);
     expect(evaluatePublicPolicy(policy, { ...request, action: "send-email" }, now / 1000)).toBe("action_not_delegated");
+  });
+  it("keeps public discovery records owner-exclusive and never extends the delegate key grant", async () => {
+    const { provider, readContract, call } = fixture();
+    const original = readContract.getMockImplementation()!;
+    readContract.mockImplementation(async (parameters) => {
+      if (parameters.functionName === "resolve") return encodeAbiParameters([{ type: "string" }], [""]);
+      return original(parameters);
+    });
+    const prepared = await provider.preparePublicAgentRecord({ ensName: request.ensName, owner, key: "agent-endpoint[meeti-rest-v1]", value: "https://example.org/public-agent" });
+    expect(prepared).toMatchObject({ from: owner, to: resolver, key: "agent-endpoint[meeti-rest-v1]" });
+    expect(call).toHaveBeenCalledOnce();
+    await expect(provider.preparePublicAgentRecord({ ensName: request.ensName, owner: delegate, key: "agent-endpoint[web]", value: "https://example.org/" })).rejects.toThrow("namespace_owner_mismatch");
+    readContract.mockImplementation(async (parameters) => parameters.functionName === "roleCount" && parameters.args[0] === textResource("agent-endpoint[web]") ? 16n : original(parameters));
+    await expect(provider.readPublicAgentRecords({ ensName: request.ensName, keys: ["agent-endpoint[web]"] })).rejects.toThrow("public_agent_record_not_owner_exclusive");
+  });
+  it("reuses a project parent registry and issues a chosen label to the recipient wallet", async () => {
+    const { provider, readContract, call } = fixture();
+    const original = readContract.getMockImplementation()!;
+    const labelHash = BigInt(keccak256(stringToHex("user1")));
+    let available = true;
+    readContract.mockImplementation(async (parameters) => {
+      if (parameters.functionName === "roles" && parameters.address === registry && parameters.args[0] === 0n && parameters.args[1] === owner) return 1n;
+      if (parameters.functionName === "getState" && parameters.args[0] === labelHash) return { status: available ? 0 : 2, expiry: available ? 0n : 1800007200n, latestOwner: owner, tokenId: 30n, resource: 31n };
+      return original(parameters);
+    });
+    expect(await provider.inspectProjectParent({ parentName: "users.alice.eth", issuer: owner })).toMatchObject({ nextStep: "ready", subregistry: registry });
+    const prepared = await provider.prepareProjectSubname({ parentName: "users.alice.eth", label: "user1", issuer: owner, recipient: delegate, expiresAt: now / 1000 + 3600 });
+    const decoded = decodeFunctionData({ abi: registryAbi, data: prepared.data });
+    expect(decoded.functionName).toBe("register");
+    expect(decoded.args?.[1]).toBe(delegate);
+    expect(prepared).toMatchObject({ from: owner, to: registry, recipient: delegate, ensName: "user1.users.alice.eth" });
+    expect(call).toHaveBeenCalledOnce();
+    available = false;
+    await expect(provider.prepareProjectSubname({ parentName: "users.alice.eth", label: "user1", issuer: owner, recipient: delegate, expiresAt: now / 1000 + 3600 })).rejects.toThrow("project_subname_not_unused");
+    expect(normalizeProjectLabel(" Alice-1 ")).toBe("alice-1");
+    await expect(provider.prepareProjectSubname({ parentName: "users.alice.eth", label: "Alice", issuer: owner, recipient: delegate, expiresAt: now / 1000 + 3600 })).rejects.toThrow("project_label_must_be_normalized");
+  });
+  it("initializes a sponsored recipient registry with only recipient root control", async () => {
+    const { provider, readContract, client, call } = fixture();
+    const original = readContract.getMockImplementation()!;
+    const labelHash = BigInt(keccak256(stringToHex("user1")));
+    readContract.mockImplementation(async (parameters) => {
+      if (parameters.functionName === "roles" && parameters.address === registry && parameters.args[0] === 0n && parameters.args[1] === owner) return 1n;
+      if (parameters.functionName === "getState" && parameters.args[0] === labelHash) return { status: 0, expiry: 0n, latestOwner: owner, tokenId: 30n, resource: 31n };
+      return original(parameters);
+    });
+    client.getCode = vi.fn(async () => undefined);
+    const prepared = await provider.prepareProjectRecipientRegistry({ parentName: "users.alice.eth", label: "user1", issuer: owner, recipient: delegate });
+    expect(prepared.needed).toBe(true);
+    if (!prepared.needed) throw new Error("expected_fixture_deployment");
+    const factory = decodeFunctionData({ abi: factoryAbi, data: prepared.data });
+    expect(factory.functionName).toBe("deployProxy");
+    const initialization = decodeFunctionData({ abi: registryInitAbi, data: factory.args![2] as `0x${string}` });
+    expect(initialization.args?.[0]).toEqual([{ account: delegate, roleBitmap: BigInt("0x" + "1".repeat(64)) }]);
+    expect(call).toHaveBeenCalledOnce();
   });
 });

@@ -154,19 +154,19 @@ export function ConnectionInstrument({ className = '' }: { className?: string })
         <svg className={`mi-drawing ${styles.front}`} viewBox="0 0 680 420" aria-hidden="true">
           {instrumentGeometry.layers.front.map(item => <g key={item.name} data-part-group={item.group || undefined} dangerouslySetInnerHTML={{ __html: item.svg }} />)}
           <g className={styles.callout}>
-            {selected === 0 && <><path d="M181 154V128H103" /><circle cx="181" cy="154" r="5" /><text x="103" y="115">Your public intent</text><path d="M257 122V85H164" /><circle cx="257" cy="122" r="5" /><text x="164" y="72">Their public intent</text></>}
-            {selected === 1 && <><path d="M401 147V88H474" /><circle cx="401" cy="147" r="5" /><text x="430" y="74">Permission boundary</text><path className={styles.exchange} d="M328 226L391 201" /><text x="245" y="360">Only what you allow passes through.</text></>}
-            {selected === 2 && <><path d="M364 259L337 319H267" /><path d="M387 273L415 341H481" /><circle cx="364" cy="259" r="6" /><circle cx="387" cy="273" r="6" /><text x="209" y="323">Your decision</text><text x="428" y="365">Their decision</text><text x="218" y="83">Neither person can decide for the other.</text></>}
-            {selected === 3 && <><rect className={styles.doorFocus} x="454" y="183" width="77" height="93" rx="16" /><path d="M498 183V126H563" /><text x="442" y="111">World paused</text><text x="443" y="326">Door stays locked</text><path d="M489 276V306" /></>}
+            {selected === 0 && <><path d="M181 154V64H36" /><circle cx="181" cy="154" r="5" /><text x="36" y="52">Your public intent</text><path d="M257 122V28H300" /><circle cx="257" cy="122" r="5" /><text x="300" y="20">Their public intent</text></>}
+            {selected === 1 && <><path d="M401 147V28H392" /><circle cx="401" cy="147" r="5" /><text x="384" y="20" textAnchor="end">Permission boundary</text><path className={styles.exchange} d="M328 226L391 201" /><text x="340" y="408" textAnchor="middle">Only what you allow passes through.</text></>}
+            {selected === 2 && <><text x="340" y="22" textAnchor="middle">Neither person can decide for the other.</text><path d="M364 259V388H168" /><path d="M387 273V388H512" /><circle cx="364" cy="259" r="6" /><circle cx="387" cy="273" r="6" /><text x="168" y="408" textAnchor="end">Your decision</text><text x="512" y="408">Their decision</text></>}
+            {selected === 3 && <><rect className={styles.doorFocus} x="454" y="183" width="77" height="93" rx="16" /><path d="M492 183V28H508" /><text x="516" y="20">World paused</text><text x="340" y="408" textAnchor="middle">Door stays locked</text><path d="M489 276V306" /></>}
           </g>
         </svg>
       </div>
       <div ref={controls} className={styles.controls} role="tablist" aria-label="Explore four introduction steps" onKeyDown={onKeyDown}>
+        <span className={styles.slider} style={{ transform: `translateX(calc(${selected} * (100% + 4px)))` }} aria-hidden="true" />
         {stages.map((stage, index) => <button key={stage.label} id={`${controlPrefix}-${index}`} type="button" role="tab" aria-selected={selected === index} aria-controls={panelId} tabIndex={selected === index ? 0 : -1} onClick={() => select(index)}><span className={styles.stepNumber}>0{index + 1}</span>{stage.label}</button>)}
       </div>
       <figcaption className={styles.caption} id={descriptionId}>
         <div id={panelId} role="tabpanel" aria-labelledby={`${controlPrefix}-${selected}`} tabIndex={0} aria-live="polite" aria-atomic="true"><strong>{frame.title}</strong><p>{frame.description}</p></div>
-        <span className={styles.disclaimer}>Illustration, not live activity.</span>
       </figcaption>
     </figure>
   );
