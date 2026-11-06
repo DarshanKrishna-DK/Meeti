@@ -22,9 +22,9 @@ export const POLICY_KEY = "network.agent.policy";
 export const STATUS_KEY = "network.agent.status";
 export const TEXT_ROLE = 1n << 4n;
 const TEXT_ADMIN = TEXT_ROLE << 128n;
-const ALL_ROLES = BigInt("0x" + "1".repeat(64));
+export const ALL_ROLES = BigInt("0x" + "1".repeat(64));
 const NAME_ROLES = (1n << 12n) | (1n << 16n) | (1n << 20n) | (1n << 24n);
-const NAME_OWNER_ROLES = NAME_ROLES | (NAME_ROLES << 128n) | (1n << 156n);
+export const NAME_OWNER_ROLES = NAME_ROLES | (NAME_ROLES << 128n) | (1n << 156n);
 const addressSchema = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const INLINE_POLICY_PREFIX = "data:application/json;base64,";
 const policyActionSchema = z.enum(["discover", "publish", "evaluate", "negotiate", "introduce", "message"]);
@@ -159,7 +159,7 @@ export function textResource(key: string): bigint { return BigInt(keccak256(stri
 export function dedicatedResolverSalt(name: string, owner: Address): bigint {
   return BigInt(keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "bytes32" }, { type: "address" }], [keccak256(stringToHex("MeetiAgentResolver:v1")), namehash(name), owner])));
 }
-function registrySalt(parent: string): bigint {
+export function registrySalt(parent: string): bigint {
   return BigInt(keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "bytes32" }, { type: "uint256" }], [keccak256(stringToHex("UserRegistry")), namehash(parent), 0n])));
 }
 function labelId(label: string) { return BigInt(keccak256(stringToHex(label))); }
@@ -307,6 +307,24 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
     return checkAuthorityAttempt(request, 0);
   }
 
+  async function inspectDelegateAncestors(input: { ensName: string; delegate: string }) {
+    validateAgentName(input.ensName.split(".").length === 2 ? `candidate.${input.ensName}` : input.ensName);
+    const delegate = getAddress(input.delegate);
+    requireCondition(!same(delegate, zeroAddress), "invalid_delegate");
+    const ctx = await context(), location = await ctx.locate(input.ensName);
+    const observations = [];
+    for (const entry of location.path) {
+      const [rootRoles, nameRoles] = await Promise.all([
+        ctx.read<bigint>(entry.registry, registryAbi, "roles", [0n, delegate]),
+        ctx.read<bigint>(entry.registry, registryAbi, "roles", [entry.resource, delegate]),
+      ]);
+      observations.push({ registry: entry.registry, resource: entry.resource.toString(), rootRoles: rootRoles.toString(), nameRoles: nameRoles.toString() });
+    }
+    const allowed = observations.every(entry => entry.rootRoles === "0" && entry.nameRoles === "0");
+    requireCondition(Math.abs(now() / 1000 - Number(ctx.block.timestamp)) < 90, "stale_chain_head");
+    return { allowed, reason: allowed ? "no_ancestor_authority" : "delegate_ancestor_control_too_broad", ensName: input.ensName, delegate, observations, blockNumber: ctx.blockNumber.toString(), checkedAt: new Date(now()).toISOString() };
+  }
+
   async function prepareTransaction(request: EnsPrepareRequest): Promise<PreparedEnsTransaction> {
     const { owner, delegate } = identities(request);
     const ctx = await context();
@@ -338,6 +356,15 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
     } else {
       const location = await ctx.locate(request.ensName);
       requireCondition(same(location.state.latestOwner, owner), "namespace_owner_mismatch");
+      if (request.operation === "grant" || request.operation === "set-policy") {
+        for (const [index, entry] of location.path.entries()) {
+          const [rootRoles, nameRoles] = await Promise.all([
+            ctx.read<bigint>(entry.registry, registryAbi, "roles", [0n, delegate]),
+            ctx.read<bigint>(entry.registry, registryAbi, "roles", [entry.resource, delegate]),
+          ]);
+          requireCondition(rootRoles === 0n && nameRoles === 0n, index === location.path.length - 1 ? "delegate_scope_too_broad" : "delegate_ancestor_control_too_broad");
+        }
+      }
       const salt = dedicatedResolverSalt(request.ensName, owner);
       const resolver = await ctx.read<Address>(ENS_DEPLOYMENT.factory, factoryAbi, "predictProxyAddress", [owner, salt]);
       result.predictedAddress = resolver;
@@ -353,6 +380,15 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
         } else {
           const current = await ctx.read<Address>(location.registry, registryAbi, "getResolver", [location.label]);
           requireCondition(same(current, resolver), "dedicated_resolver_not_assigned");
+          if (request.operation === "grant" || request.operation === "set-policy") {
+            const [rootRoles, policyCount, statusRoles] = await Promise.all([
+              ctx.read<bigint>(resolver, resolverAbi, "roles", [0n, delegate]),
+              ctx.read<bigint>(resolver, resolverAbi, "roleCount", [textResource(POLICY_KEY)]),
+              ctx.read<bigint>(resolver, resolverAbi, "roles", [textResource(STATUS_KEY), delegate]),
+            ]);
+            requireCondition(rootRoles === 0n && policyCount === 0n, "delegate_scope_too_broad");
+            requireCondition(statusRoles === 0n || statusRoles === TEXT_ROLE, "delegate_setter_admin_or_extra_roles");
+          }
           if (request.operation === "set-policy") {
             const policy = publicPolicySchema.parse(JSON.parse(request.value ?? ""));
             const denial = evaluatePublicPolicy(policy, { ...request, action: policy.actions[0], policyDigest: options.namespace?.policyDigest }, now() / 1000, { allowPausedOwnerRecord: true });
@@ -534,7 +570,7 @@ export function createEnsAuthorityProvider(options: EnsProviderOptions = {}) {
       else if (transport?.getSocket) (await transport.getSocket()).close();
     } catch { /* Cleanup must not replace a fail-closed result or expose endpoint credentials. */ }
   }
-  return { checkAuthority, prepareTransaction, readPublicAgentRecords, preparePublicAgentRecord, inspectProjectParent, prepareProjectSubname, prepareProjectRecipientRegistry, confirmTransaction, disconnect };
+  return { checkAuthority, inspectDelegateAncestors, prepareTransaction, readPublicAgentRecords, preparePublicAgentRecord, inspectProjectParent, prepareProjectSubname, prepareProjectRecipientRegistry, confirmTransaction, disconnect };
 }
 
 export async function verifyEnsIndependently(options: Pick<EnsProviderOptions, "rpcUrl" | "client" | "now">, request: EnsAuthorityRequest) {

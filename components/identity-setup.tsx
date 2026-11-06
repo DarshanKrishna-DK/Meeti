@@ -47,7 +47,7 @@ function IdentitySetupForOwner({ state, onUpdated }: { state: AppState; onUpdate
       <label className="check-row"><input type="checkbox" checked={approved} onChange={event => setApproved(event.target.checked)} />I approve this description becoming public on Sepolia. It contains no private contacts or files.</label>
       {!value?.canPublishEndpoint && <p>Public endpoint publication requires a configured HTTPS deployment. Local development is not advertised as an external service.</p>}
       <div className="button-row"><button className="button secondary" disabled={busy || Boolean(value?.identity) || !value?.deployment.verified} onClick={() => prepare('register-identity')}>Review registry registration</button>
-        <button className="button secondary" disabled={busy || !value?.canPublishEndpoint || !approved || !name.trim() || !description.trim()} onClick={() => prepare('publish-context')}>Review public context</button>
+        <button className="button secondary" disabled={busy || !approved || !name.trim() || !description.trim()} onClick={() => prepare('publish-context')}>Review public context</button>
         <button className="button secondary" disabled={busy || !value?.canPublishEndpoint || !approved || !name.trim() || !description.trim()} onClick={() => prepare('publish-endpoint')}>Review discovery endpoint</button>
         <button className="button secondary" disabled={busy || !value?.identity} onClick={() => prepare('set-identity-uri')}>Review registration metadata</button>
         <button className="button secondary" disabled={busy || !value?.identity} onClick={() => prepare('attest-association')}>Review ENS association</button></div></>}

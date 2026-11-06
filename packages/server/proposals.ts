@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { agent, atomic, audit, db, intent, profile, proposal, type ProposalRow } from './db';
-import { decrypt, encrypt, sign } from './crypto';
+import { decrypt, encrypt, hash, sign } from './crypto';
 import { ai, assertIntent, participant, policyDigest } from './policy';
 import { HttpError, requireValue } from './security';
 import type { Room } from '../shared/src';
@@ -9,7 +9,8 @@ import { requireWorldCapability, worldEnabled } from './capabilities';
 import { freshPublicIntent } from './discovery';
 import type { RunningStage } from './agent-runs';
 import { privateSnapshotDigest } from './context-policy';
-import { startQualification } from './qualifications';
+import { assertCurrentPublicIdentityBindings, startQualification } from './qualifications';
+import { qualificationRecord } from './qualification-context';
 
 export function ownedProposal(userId: string, id: string) {
   const p = requireValue(proposal(id), 'Introduction request was not found.', 404);
@@ -41,7 +42,19 @@ export function assertPair(p: NonNullable<ReturnType<typeof proposal>>, expected
 }
 export async function validatePair(p: NonNullable<ReturnType<typeof proposal>>, action: 'negotiate' | 'introduce' | 'message') {
   assertPair(p);
-  await Promise.all([freshPublicIntent(p.row.left_user, p.value.leftIntent, action), freshPublicIntent(p.row.right_user, p.value.rightIntent, action)]);
+  const source = db().prepare('SELECT id FROM qualifications WHERE pair_key=?').get(p.row.pair_key) as { id: string } | undefined;
+  const qualification = source ? requireValue(qualificationRecord(source.id), 'The originating agent review is unavailable.', 409) : null;
+  const newFormat = p.value.compatibility && typeof p.value.compatibility === 'object' && 'qualification' in p.value.compatibility;
+  if (qualification) {
+    if (qualification.row.left_user !== p.row.left_user || qualification.row.right_user !== p.row.right_user || qualification.row.state !== 'proposed'
+      || qualification.value.proposalId !== p.row.id || qualification.value.result?.state !== 'qualified'
+      || JSON.stringify(qualification.value.snapshot) !== JSON.stringify(p.value)
+      || hash(JSON.stringify({ pairKey: qualification.row.pair_key, snapshot: qualification.value.snapshot })) !== p.row.digest) {
+      throw new HttpError(409, 'QUALIFICATION_BINDING_CHANGED', 'This introduction no longer agrees with its completed agent review.');
+    }
+  } else if (newFormat) throw new HttpError(409, 'QUALIFICATION_REQUIRED', 'The completed agent review for this introduction is unavailable.');
+  await Promise.all([freshPublicIntent(p.row.left_user, p.value.leftIntent, action), freshPublicIntent(p.row.right_user, p.value.rightIntent, action),
+    assertCurrentPublicIdentityBindings(p.row.left_user, p.row.right_user, qualification?.value.publicIdentities)]);
   assertPair(p);
 }
 function latestConsents(p: NonNullable<ReturnType<typeof proposal>>) {

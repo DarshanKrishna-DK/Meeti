@@ -289,12 +289,21 @@ export async function route(request: Request, path: string[]): Promise<Response>
       const { intentId } = z.object({ intentId: z.string().uuid() }).strict().parse(body);
       const previous = ownIntent(actor.id, intentId); assertIntent(previous);
       const a = await authority(actor.id, 'publish', previous.policyVersion);
-      if (db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted')) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before closing this intent.');
-      const value: Intent = { ...previous, version: previous.version + 1, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
-        status: 'draft', publicStatus: 'closed', arkivKey: undefined, transactionHash: undefined };
-      saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache();
-      audit(actor.id, 'intent', 'closure_prepared', 'Local matching stopped. Publish the reviewed closure revision to update the public index.');
-      return ok(value);
+      return atomic(() => {
+        const currentActor = requireUser(request);
+        if (currentActor.id !== actor.id || currentActor.wallet?.toLowerCase() !== actor.wallet?.toLowerCase()) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Sign in again before closing this intent.');
+        const current = ownIntent(actor.id, intentId);
+        if (hash(JSON.stringify(current)) !== hash(JSON.stringify(previous))) throw new HttpError(409, 'INTENT_CHANGED', 'This intent changed while checking permissions. Refresh before closing it.');
+        assertIntent(current);
+        const currentAgent = agent(actor.id);
+        if (!currentAgent || policyDigest(currentAgent.policy) !== policyDigest(a.policy)) throw new HttpError(409, 'POLICY_CHANGED', 'Agent permissions changed while closing this intent. Refresh and review them.');
+        if (db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted')) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before closing this intent.');
+        const value: Intent = { ...current, version: current.version + 1, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
+          status: 'draft', publicStatus: 'closed', arkivKey: undefined, transactionHash: undefined };
+        saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache();
+        audit(actor.id, 'intent', 'closure_prepared', 'Local matching stopped. Publish the reviewed closure revision to update the public index.');
+        return ok(value);
+      });
     }
     if (key === 'intent/publish') {
       const input = z.object({ intentId: z.string().uuid(), signature: hexSchema.optional(), maxFeeWei: z.string().regex(/^\d+$/).max(30).optional() }).strict().parse(body);

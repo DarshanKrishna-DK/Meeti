@@ -13,7 +13,11 @@ vi.mock('../packages/server/discovery', async () => {
 });
 
 // This suite substitutes provider boundaries only in tests. No result is live identity evidence.
-const fixture = vi.hoisted(() => ({ start: vi.fn(), poll: vi.fn(), authority: vi.fn(), introduction: vi.fn(), revoked: new Set<string>() }));
+const fixture = vi.hoisted(() => ({ start: vi.fn(), poll: vi.fn(), authority: vi.fn(), publicIdentity: vi.fn(), introduction: vi.fn(), revoked: new Set<string>() }));
+vi.mock('../packages/server/identity', async importOriginal => ({
+  ...await importOriginal<typeof import('../packages/server/identity')>(),
+  resolveCurrentPublicAgentIdentityForUser: fixture.publicIdentity,
+}));
 vi.mock('../packages/world', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/world')>(),
   createWorldProvider: () => ({ start: fixture.start, poll: fixture.poll }),
@@ -114,6 +118,12 @@ beforeEach(() => {
     if (fixture.revoked.has(userId)) throw new HttpError(403, 'ENS_AUTHORITY_DENIED', 'Explicit test fixture revocation.');
     return agent(userId);
   });
+  // Public identity resolution is an explicit provider fixture, not a bypass of the proposal binding guard.
+  fixture.publicIdentity.mockReset().mockImplementation(async (userId: string) => ({
+    ensName: agent(userId)!.ensName, owner: agent(userId)!.owner,
+    context: { state: 'absent' }, association: { state: 'absent' },
+    observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() }, authorityVerified: false, humanVerified: false,
+  }));
   fixture.introduction.mockReset().mockResolvedValue({ output: { opening: 'Explicit test-only introduction.', suggestedFirstQuestion: 'What would you build?' } });
 });
 afterEach(() => {

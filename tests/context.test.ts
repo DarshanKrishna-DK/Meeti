@@ -7,8 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, ContextDocument, Intent, Profile, Room } from '../packages/shared/src';
 
 // Provider substitutions are test fixtures. These results are not live identity or chain evidence.
-const fixture = vi.hoisted(() => ({ revoked: new Set<string>(), authority: vi.fn(), hangingProcess: false, crashingProcess: false,
+const fixture = vi.hoisted(() => ({ revoked: new Set<string>(), authority: vi.fn(), publicIdentity: vi.fn(), hangingProcess: false, crashingProcess: false,
   processOptions: [] as unknown[], kill: vi.fn().mockReturnValue(true) }));
+vi.mock('../packages/server/identity', async importOriginal => ({
+  ...await importOriginal<typeof import('../packages/server/identity')>(),
+  resolveCurrentPublicAgentIdentityForUser: fixture.publicIdentity,
+}));
 vi.mock('../packages/server/policy', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/server/policy')>(), authority: fixture.authority,
 }));
@@ -125,6 +129,12 @@ beforeEach(() => {
     if (fixture.revoked.has(userId)) throw new HttpError(403, 'ENS_AUTHORITY_DENIED', 'Explicit fixture revocation.');
     return agent(userId);
   });
+  // Legacy room fixtures declare no public context or registry association. The binding guard still executes.
+  fixture.publicIdentity.mockReset().mockImplementation(async (userId: string) => ({
+    ensName: agent(userId)!.ensName, owner: agent(userId)!.owner,
+    context: { state: 'absent' }, association: { state: 'absent' },
+    observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() }, authorityVerified: false, humanVerified: false,
+  }));
 });
 afterEach(() => {
   vi.useRealTimers(); vi.restoreAllMocks();

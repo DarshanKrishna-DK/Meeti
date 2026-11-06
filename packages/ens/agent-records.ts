@@ -26,8 +26,8 @@ export const publicAgentContextSchema = z.object({
   description: z.string().min(1).max(1000),
   capabilities: z.array(z.enum(["discover", "publish", "evaluate", "negotiate", "introduce", "message"])).max(6)
     .refine((values) => new Set(values).size === values.length),
-  endpoints: z.array(z.object({ protocol: agentEndpointProtocolSchema, url: httpsUrl }).strict()).min(1).max(2)
-    .refine((values) => new Set(values.map((value) => value.protocol)).size === values.length),
+  endpoints: z.array(z.object({ protocol: agentEndpointProtocolSchema, url: httpsUrl }).strict()).max(2)
+    .refine((values) => new Set(values.map((value) => value.protocol)).size === values.length).default([]),
   registration: agentRegistryIdentitySchema.optional(),
 }).strict();
 export type PublicAgentContext = z.infer<typeof publicAgentContextSchema>;

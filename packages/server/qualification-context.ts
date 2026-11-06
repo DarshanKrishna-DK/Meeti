@@ -6,8 +6,10 @@ import type { Policy } from '../shared/src';
 import { privateSnapshotDigest } from './context-policy';
 
 export type QualificationAnswer = { questionId: string; userId: string; ownerAgentId: string; fieldId: string; text: string; fieldClass: 'bio' | 'seeking' | 'offering'; answeredAt: string; providerDisclosureConsent: true; shareWithCounterpart: true };
+export type QualificationPublicIdentityBinding = { digest: string; context: 'absent' | 'valid'; association: 'absent' | 'verified' };
 export type QualificationData = { snapshot: ProposalData; result: QualificationResult | null; messages: QualificationMessage[]; questions: QualificationOwnerQuestion[]; answers: QualificationAnswer[]; proposalId?: string; failureCode?: string;
-  checkpoint?: QualificationCheckpoint; attempts?: InferenceReservation[]; retryable?: boolean };
+  checkpoint?: QualificationCheckpoint; attempts?: InferenceReservation[]; retryable?: boolean;
+  publicIdentities?: { left: QualificationPublicIdentityBinding; right: QualificationPublicIdentityBinding } };
 export type QualificationRow = { id: string; left_user: string; right_user: string; pair_key: string; state: string; version: number; data: string; lease_token: string | null; lease_until: string | null; updated_at: string };
 export function qualificationRecord(id: string) {
   const row = db().prepare('SELECT * FROM qualifications WHERE id=?').get(id) as QualificationRow | undefined;

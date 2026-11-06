@@ -4,7 +4,7 @@ import { createPublicClient, getAddress, type Hex } from 'viem';
 import { sepolia } from 'viem/chains';
 import { createEnsAuthorityProvider, normalizeProjectLabel } from '../ens';
 import { createAgentIdentityProvider, type PreparedIdentityTransaction } from '../ens/agent-identity';
-import { AGENT_CONTEXT_KEY, MEETI_AGENT_PROTOCOL, agentEndpointKey, publicAgentContextSchema, registryReference, type AgentRegistryIdentity, type PublicAgentContext } from '../ens/agent-records';
+import { AGENT_CONTEXT_KEY, MEETI_AGENT_PROTOCOL, agentEndpointKey, agentRegistryIdentitySchema, publicAgentContextSchema, registryReference, type AgentRegistryIdentity, type PublicAgentContext } from '../ens/agent-records';
 import { createEnsReadTransport } from '../ens/rpc-transport';
 import { agent, atomic, audit, db, type UserRow } from './db';
 import { decrypt, encrypt } from './crypto';
@@ -36,6 +36,56 @@ export function approvedAgentOrigin(): string {
   const url = new URL(process.env.PUBLIC_APP_ORIGIN || process.env.APP_ORIGIN || 'http://localhost');
   if (url.protocol !== 'https:' || url.username || url.password || /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[|.*\.(local|localhost)$)/i.test(url.hostname)) throw new HttpError(409, 'PUBLIC_ENDPOINT_UNAVAILABLE', 'Configure a publicly reachable HTTPS application origin before publishing agent endpoints. Local development is not a public service.');
   return url.origin;
+}
+
+export type CurrentPublicAgentIdentity = {
+  ensName: string; owner: string;
+  context: { state: 'absent' | 'invalid' | 'valid'; value?: PublicAgentContext; reason?: string };
+  association: { state: 'absent' | 'invalid' | 'verified'; identity?: AgentRegistryIdentity; reason?: string;
+    verification?: Awaited<ReturnType<ReturnType<typeof createAgentIdentityProvider>['verifyAssociation']>> };
+  observed: { chainId: number; blockNumber: string; checkedAt: string };
+  authorityVerified: false; humanVerified: false;
+};
+function sameRegistryIdentity(left: AgentRegistryIdentity, right: AgentRegistryIdentity): boolean {
+  return left.chainId === right.chainId && left.registry.toLowerCase() === right.registry.toLowerCase() && left.agentId === right.agentId;
+}
+
+/** Current public metadata only. Consumers must independently enforce EAC authority and treat descriptions as untrusted data. */
+export async function resolveCurrentPublicAgentIdentity(input: { ensName: string; owner: string; identity?: AgentRegistryIdentity; requireContext?: boolean }): Promise<CurrentPublicAgentIdentity> {
+  const c = connections();
+  try {
+    const keys = [AGENT_CONTEXT_KEY, agentEndpointKey(MEETI_AGENT_PROTOCOL), agentEndpointKey('web')];
+    const resolved = await c.ens.readPublicAgentRecords({ ensName: input.ensName, owner: input.owner, keys });
+    const raw = resolved.records[AGENT_CONTEXT_KEY];
+    let context: CurrentPublicAgentIdentity['context'];
+    if (!raw) context = input.requireContext ? { state: 'invalid', reason: 'previously_confirmed_context_missing' } : { state: 'absent', reason: 'agent_context_not_published' };
+    else {
+      try {
+        if (new TextEncoder().encode(raw).length > 16384) throw new Error('context_too_large');
+        const value = publicAgentContextSchema.parse(JSON.parse(raw));
+        if (value.ensName !== input.ensName) context = { state: 'invalid', reason: 'agent_context_name_mismatch' };
+        else if (value.endpoints.some(endpoint => resolved.records[agentEndpointKey(endpoint.protocol)] !== endpoint.url)) context = { state: 'invalid', reason: 'declared_endpoint_record_mismatch' };
+        else context = { state: 'valid', value };
+      } catch { context = { state: 'invalid', reason: 'unsupported_or_invalid_meeti_context' }; }
+    }
+    let association: CurrentPublicAgentIdentity['association'] = { state: 'absent', reason: 'registration_not_declared' };
+    const claimed = context.value?.registration;
+    const expected = input.identity ? agentRegistryIdentitySchema.parse(input.identity) : undefined;
+    if (expected && claimed && !sameRegistryIdentity(expected, claimed)) association = { state: 'invalid', identity: expected, reason: 'registration_tuple_mismatch' };
+    else if (expected || claimed) {
+      const identity = expected ?? claimed!;
+      const verification = await c.identity.verifyAssociation({ identity, ensName: input.ensName, owner: input.owner });
+      association = verification.verified ? { state: 'verified', identity, verification } : { state: 'invalid', identity, reason: verification.reason, verification };
+    }
+    return { ensName: input.ensName, owner: resolved.owner, context, association,
+      observed: { chainId: resolved.chainId, blockNumber: resolved.blockNumber, checkedAt: resolved.checkedAt }, authorityVerified: false, humanVerified: false };
+  } finally { await c.close(); }
+}
+
+/** An already published context or stored registry tuple cannot silently become optional after removal. */
+export async function resolveCurrentPublicAgentIdentityForUser(userId: string): Promise<CurrentPublicAgentIdentity> {
+  const current = requireValue(agent(userId), 'Configure or recover your ENS agent first.', 409), stored = read(userId);
+  return resolveCurrentPublicAgentIdentity({ ensName: current.ensName, owner: current.owner, identity: stored.identity, requireContext: Boolean(stored.context) });
 }
 function pending(userId: string, id: string) {
   const row = requireValue(db().prepare("SELECT * FROM operations WHERE id=? AND user_id=? AND kind='identity'").get(id, userId) as { id: string; data: string; state: string } | undefined, 'Identity operation was not found.', 404);
@@ -112,14 +162,20 @@ export async function handleIdentity(request: Request, key: string, actor: UserR
         const identity = requireValue(stored.identity, 'Confirm registration and its metadata first.', 409);
         const association = await c.identity.prepareAssociationRecord({ identity, ensName: current.ensName, owner: actor.wallet });
         transaction = await c.ens.preparePublicAgentRecord(association);
-      } else {
+      } else if (input.operation === 'publish-context') {
         if (!input.publicApproved) throw new HttpError(400, 'PUBLIC_APPROVAL_REQUIRED', 'Review and approve the exact public description first.');
-        const endpoint = `${approvedAgentOrigin()}/api/public/agents/${encodeURIComponent(current.ensName)}/context`;
         context = publicAgentContextSchema.parse({ type: 'meeti-agent-context-v1', ensName: current.ensName, name: input.name || stored.context?.name,
           description: input.description || stored.context?.description, capabilities: current.policy.allowedActions,
-          endpoints: [{ protocol: MEETI_AGENT_PROTOCOL, url: endpoint }], ...(stored.identity ? { registration: stored.identity } : {}) });
-        transaction = await c.ens.preparePublicAgentRecord({ ensName: current.ensName, owner: actor.wallet,
-          key: input.operation === 'publish-context' ? AGENT_CONTEXT_KEY : agentEndpointKey(MEETI_AGENT_PROTOCOL), value: input.operation === 'publish-context' ? JSON.stringify(context) : endpoint });
+          endpoints: stored.context?.endpoints ?? [], ...(stored.identity ? { registration: stored.identity } : {}) });
+        transaction = await c.ens.preparePublicAgentRecord({ ensName: current.ensName, owner: actor.wallet, key: AGENT_CONTEXT_KEY, value: JSON.stringify(context) });
+      } else {
+        if (!input.publicApproved) throw new HttpError(400, 'PUBLIC_APPROVAL_REQUIRED', 'Review and approve the exact public endpoint first.');
+        const endpoint = `${approvedAgentOrigin()}/api/public/agents/${encodeURIComponent(current.ensName)}/context`;
+        const approvedContext = requireValue(stored.context, 'Publish an approved public context before its optional endpoint.', 409);
+        const observed = await c.ens.readPublicAgentRecords({ ensName: current.ensName, owner: actor.wallet, keys: [AGENT_CONTEXT_KEY] });
+        if (observed.records[AGENT_CONTEXT_KEY] !== JSON.stringify(approvedContext)) throw new HttpError(409, 'PUBLIC_RECORD_CHANGED', 'Confirm the approved public context before publishing its endpoint.');
+        // This transaction changes only the endpoint record. It does not silently republish or change approved context.
+        transaction = await c.ens.preparePublicAgentRecord({ ensName: current.ensName, owner: actor.wallet, key: agentEndpointKey(MEETI_AGENT_PROTOCOL), value: endpoint });
       }
       return ok(await storePrepared(request, actor, transaction, { maxFeeWei: input.maxFeeWei, identityPrepared, context, identity: stored.identity }, c.client));
     }
@@ -170,15 +226,12 @@ export async function publicAgentResponse(ensName: string, kind: 'context' | 're
   const rows = db().prepare('SELECT user_id,data FROM agent_registrations').all() as { user_id: string; data: string }[];
   const match = rows.map(row => ({ userId: row.user_id, value: decrypt<Stored>(row.data, `agent-registration:${row.user_id}`) })).find(row => row.value.ensName === ensName);
   if (!match?.value.context) throw new HttpError(404, 'NOT_FOUND', 'Public agent context was not found.');
-  const c = connections();
-  try {
-    const current = requireValue(agent(match.userId), 'Public agent was not found.', 404);
-    const resolved = await c.ens.readPublicAgentRecords({ ensName, owner: current.owner, keys: [AGENT_CONTEXT_KEY, agentEndpointKey(MEETI_AGENT_PROTOCOL)] });
-    if (resolved.records[AGENT_CONTEXT_KEY] !== JSON.stringify(match.value.context) || !match.value.context.endpoints.some(endpoint => endpoint.url === resolved.records[agentEndpointKey(MEETI_AGENT_PROTOCOL)])) throw new HttpError(409, 'PUBLIC_RECORD_CHANGED', 'Current ENS public records do not agree with this service.');
-    if (kind === 'context') return Response.json({ ...match.value.context, protocol: MEETI_AGENT_PROTOCOL, protocolVersion: '1', supportedMethods: ['GET context', 'GET registration'], checkedAt: resolved.checkedAt }, { headers: { 'Cache-Control': 'no-store' } });
-    const identity = requireValue(match.value.identity, 'Agent registration was not found.', 404);
-    const association = await c.identity.verifyAssociation({ identity, ensName, owner: current.owner });
-    if (!association.verified) throw new HttpError(409, 'ASSOCIATION_UNVERIFIED', 'Current ENS and registry association could not be verified.');
-    return Response.json(association.registration, { headers: { 'Cache-Control': 'no-store' } });
-  } finally { await c.close(); }
+  const current = requireValue(agent(match.userId), 'Public agent was not found.', 404);
+  const resolved = await resolveCurrentPublicAgentIdentity({ ensName, owner: current.owner, identity: match.value.identity, requireContext: true });
+  if (resolved.context.state !== 'valid' || JSON.stringify(resolved.context.value) !== JSON.stringify(match.value.context)) throw new HttpError(409, 'PUBLIC_RECORD_CHANGED', 'Current ENS public records do not agree with this service.');
+  if (kind === 'context') return Response.json({ ...resolved.context.value, protocol: MEETI_AGENT_PROTOCOL, protocolVersion: '1', supportedMethods: ['GET context', 'GET registration'], registrationAssociationState: resolved.association.state, checkedAt: resolved.observed.checkedAt }, { headers: { 'Cache-Control': 'no-store' } });
+  requireValue(match.value.identity, 'Agent registration was not found.', 404);
+  const association = resolved.association.verification;
+  if (resolved.association.state !== 'verified' || !association?.verified) throw new HttpError(409, 'ASSOCIATION_UNVERIFIED', 'Current ENS and registry association could not be verified.');
+  return Response.json(association.registration, { headers: { 'Cache-Control': 'no-store' } });
 }

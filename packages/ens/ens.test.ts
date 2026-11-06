@@ -12,7 +12,7 @@ const request = { ensName: "agent.alice.eth", owner, delegate, action: "publish"
 const policy: EnsPublicPolicy = { version: "1", ensName: request.ensName, owner, delegate, digest: request.policyDigest, uri: "https://example.org/public-policy/1", expiresAt: now / 1000 + 3600, actions: ["publish", "negotiate", "reveal", "update-status"], resolverScope: "dedicated-agent" };
 
 function fixture() {
-  const state = { granted: true, active: true, broad: false, setterAdmin: false, policy: { ...policy }, chain: 11155111, implementation: ENS_DEPLOYMENT.resolverImplementation as Address, expired: false };
+  const state = { granted: true, active: true, broad: false, ancestorControl: false, setterAdmin: false, policy: { ...policy }, chain: 11155111, implementation: ENS_DEPLOYMENT.resolverImplementation as Address, expired: false };
   const readContract = vi.fn(async ({ address, functionName, args }: { address: Address; functionName: string; args: unknown[] }) => {
     if (functionName === "ROOT_REGISTRY") return ENS_DEPLOYMENT.rootRegistry;
     if (functionName === "isENSv2") return state.active;
@@ -22,6 +22,7 @@ function fixture() {
     if (functionName === "verifyContract") return args[0] === registry ? ENS_DEPLOYMENT.registryImplementation : state.implementation;
     if (functionName === "roles") {
       if (args[1] === owner) return BigInt("0x" + "1".repeat(64));
+      if (state.ancestorControl && address === ENS_DEPLOYMENT.ethRegistry && args[1] === delegate) return 16n;
       if (address === resolver && args[0] === textResource(STATUS_KEY)) return (state.granted ? 16n : 0n) | (state.setterAdmin ? 16n << 128n : 0n);
       return state.broad && address === resolver && args[0] === 0n ? 16n : 0n;
     }
@@ -168,6 +169,16 @@ describe("ENSv2 authoritative checks", () => {
     expect(grant).toMatchObject({ to: resolver, from: owner, value: "0x0", chainId: 11155111 });
     expect(grant.data).not.toBe(revoke.data);
     expect(call).toHaveBeenCalledTimes(2);
+  });
+  it("rejects ancestor-controlling delegates before preparing a grant or policy transaction", async () => {
+    const { provider, state, call } = fixture(); state.ancestorControl = true;
+    expect(await provider.inspectDelegateAncestors({ ensName: request.ensName, delegate })).toMatchObject({ allowed: false, reason: "delegate_ancestor_control_too_broad" });
+    expect(await provider.checkAuthority(request)).toMatchObject({ allowed: false, reason: "delegate_ancestor_control_too_broad" });
+    await expect(provider.prepareTransaction({ ...request, operation: "grant" })).rejects.toThrow("delegate_ancestor_control_too_broad");
+    await expect(provider.prepareTransaction({ ...request, operation: "set-policy", value: JSON.stringify(policy) })).rejects.toThrow("delegate_ancestor_control_too_broad");
+    expect(call).not.toHaveBeenCalled();
+    // Removing an unsafe grant remains possible through the owner-authorized exact revoke path.
+    expect((await provider.prepareTransaction({ ...request, operation: "revoke" })).from).toBe(owner);
   });
   it("rejects forbidden delegated keys before simulation", async () => {
     const { provider, call } = fixture();

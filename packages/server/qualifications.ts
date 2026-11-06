@@ -5,8 +5,9 @@ import { encrypt, hash } from './crypto';
 import { ai, arkiv, assertIntent, authority, participant, policyDigest } from './policy';
 import { assessPair, freshPublicIntent } from './discovery';
 import { privateSnapshotDigest } from './context-policy';
+import { resolveCurrentPublicAgentIdentityForUser } from './identity';
 import { HttpError, requireValue } from './security';
-import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationRow } from './qualification-context';
+import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationPublicIdentityBinding, type QualificationRow } from './qualification-context';
 import type { RunningStage } from './agent-runs';
 import { AgentError } from '../agents/src';
 
@@ -29,10 +30,36 @@ function current(record: RecordValue) {
     if (a.policy.paused || Date.parse(a.policy.expiresAt) <= Date.now()) throw new HttpError(403, 'POLICY_INACTIVE', 'The current policy is inactive.');
   }
 }
+async function publicIdentityBinding(userId: string): Promise<QualificationPublicIdentityBinding> {
+  const result = await resolveCurrentPublicAgentIdentityForUser(userId), a = requireValue(agent(userId), 'Agent is unavailable.');
+  if (result.ensName !== a.ensName || result.owner.toLowerCase() !== a.owner.toLowerCase() || result.observed.chainId !== 11155111
+    || !['absent', 'valid'].includes(result.context.state) || !['absent', 'verified'].includes(result.association.state)
+    || (result.context.state === 'valid' && !result.context.value) || (result.association.state === 'verified' && !result.association.identity)) {
+    throw new HttpError(403, 'PUBLIC_IDENTITY_DENIED', 'The current public agent identity or declared registration could not be verified.');
+  }
+  // Remote prose remains untrusted public data. Only its binding digest and verification states persist here.
+  return { context: result.context.state as 'absent' | 'valid', association: result.association.state as 'absent' | 'verified',
+    digest: hash(JSON.stringify({ ensName: result.ensName, owner: result.owner.toLowerCase(), chainId: result.observed.chainId,
+      context: { state: result.context.state, value: result.context.value ?? null }, association: { state: result.association.state, identity: result.association.identity ?? null } })) };
+}
+async function currentPublicIdentities(record: RecordValue) {
+  current(record);
+  const identities = await assertCurrentPublicIdentityBindings(record.row.left_user, record.row.right_user, record.value.publicIdentities);
+  current(record);
+  return identities;
+}
+/** A proposal without historical metadata bindings cannot claim a newly declared registration. */
+export async function assertCurrentPublicIdentityBindings(leftUser: string, rightUser: string, expected?: QualificationData['publicIdentities']) {
+  const [left, right] = await Promise.all([publicIdentityBinding(leftUser), publicIdentityBinding(rightUser)]);
+  if (expected && (expected.left.digest !== left.digest || expected.right.digest !== right.digest)) throw new HttpError(409, 'PUBLIC_IDENTITY_CHANGED', 'A public agent context or registration changed. Start a fresh candidate review.');
+  if (!expected && [left, right].some(identity => identity.context !== 'absent' || identity.association !== 'absent')) throw new HttpError(409, 'PUBLIC_IDENTITY_BINDING_REQUIRED', 'This older introduction has no matching public identity review. Create a fresh introduction request.');
+  return { left, right };
+}
 async function live(record: RecordValue) {
   current(record);
-  await Promise.all([freshPublicIntent(record.row.left_user, record.value.snapshot.leftIntent, 'negotiate'), freshPublicIntent(record.row.right_user, record.value.snapshot.rightIntent, 'negotiate')]);
+  const [, , identities] = await Promise.all([freshPublicIntent(record.row.left_user, record.value.snapshot.leftIntent, 'negotiate'), freshPublicIntent(record.row.right_user, record.value.snapshot.rightIntent, 'negotiate'), currentPublicIdentities(record)]);
   current(record);
+  return identities;
 }
 function persist(record: RecordValue, state: string, token?: string) {
   const result = db().prepare('UPDATE qualifications SET state=?,version=version+1,data=?,updated_at=? WHERE id=? AND version=?' + (token ? " AND lease_token=? AND lease_until>?" : ''))
@@ -71,6 +98,8 @@ export function listQualificationDtos(userId: string) {
     return { id, version: row.version, state, stopReason: value.result?.stopReason, otherEns, summary: summary(value), proposalId: value.proposalId || null,
       failureCode: value.failureCode || (state === 'blocked' ? 'CURRENT_AUTHORITY_REQUIRED' : null),
       canRetry: currentValid && state === 'blocked' && value.retryable === true && remaining(value), attemptsUsed: value.attempts?.length ?? value.messages.length, maxAttempts,
+      publicIdentity: value.publicIdentities ? { own: { context: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].context, association: value.publicIdentities[row.left_user === userId ? 'left' : 'right'].association },
+        counterpart: { context: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].context, association: value.publicIdentities[row.left_user === userId ? 'right' : 'left'].association }, observation: 'checked_before_protected_actions' } : null,
       messages: value.messages.map(message => ({ id: message.id, speaker: message.agentId === value.snapshot.leftAgent ? agent(row.left_user)?.ensName || 'First agent' : agent(row.right_user)?.ensName || 'Second agent', content: message.message, createdAt: message.createdAt, round: message.round, evidence: message.evidence })),
       questions: value.questions.filter(question => question.ownerAgentId === ownAgent).map(question => ({ id: question.id, question: question.question, answered: value.answers.some(answer => answer.questionId === question.id) })) };
   });
@@ -85,12 +114,15 @@ export async function startQualification(userId: string, ownIntentId: string, ca
   if (other.userId === userId || candidate.owner.toLowerCase() !== b.owner.toLowerCase() || candidate.intent.ensAgentRef !== b.ensName || candidate.intent.version !== other.value.version || other.value.arkivKey?.toLowerCase() !== candidateKey.toLowerCase() || own.value.goal !== other.value.goal) throw new HttpError(409, 'CANDIDATE_CHANGED', 'The candidate does not match its current owner inbox.');
   const snapshot: ProposalData = { leftIntent: own.value, rightIntent: other.value, leftPolicy: a.policy, rightPolicy: b.policy, leftAgent: a.id, rightAgent: b.id,
     leftProfileDigest: privateSnapshotDigest(userId), rightProfileDigest: privateSnapshotDigest(other.userId), summary: '', compatibility: null, exchanges: [], createdAt: new Date().toISOString() };
-  const pairKey = hash(JSON.stringify([userId, other.userId].map((owner, index) => ({ owner, intent: index ? snapshot.rightIntent : snapshot.leftIntent, policy: index ? snapshot.rightPolicy : snapshot.leftPolicy, profile: index ? snapshot.rightProfileDigest : snapshot.leftProfileDigest })).sort((x, y) => x.owner.localeCompare(y.owner))));
+  const [leftIdentity, rightIdentity] = await Promise.all([publicIdentityBinding(userId), publicIdentityBinding(other.userId)]);
+  const publicIdentities = { left: leftIdentity, right: rightIdentity };
+  const pairKey = hash(JSON.stringify([userId, other.userId].map((owner, index) => ({ owner, intent: index ? snapshot.rightIntent : snapshot.leftIntent, policy: index ? snapshot.rightPolicy : snapshot.leftPolicy, profile: index ? snapshot.rightProfileDigest : snapshot.leftProfileDigest,
+    publicIdentity: index ? rightIdentity.digest : leftIdentity.digest })).sort((x, y) => x.owner.localeCompare(y.owner))));
   const id = atomic(() => {
     checkSession();
     const prior = db().prepare('SELECT id FROM qualifications WHERE pair_key=?').get(pairKey) as { id: string } | undefined;
     if (prior) return prior.id;
-    const id = randomUUID(), value: QualificationData = { snapshot, result: null, messages: [], questions: [], answers: [], attempts: [] };
+    const id = randomUUID(), value: QualificationData = { snapshot, result: null, messages: [], questions: [], answers: [], attempts: [], publicIdentities };
     const provisional = { row: { left_user: userId, right_user: other.userId } as QualificationRow, value };
     current(provisional);
     db().prepare('INSERT INTO qualifications(id,left_user,right_user,pair_key,state,version,data,updated_at) VALUES(?,?,?,?,?,1,?,?)')
@@ -119,7 +151,8 @@ async function execute(userId: string, id: string, version: number, checkSession
     if (changed.changes !== 1) throw new HttpError(409, 'QUALIFICATION_BUSY', 'Another review already started.');
   });
   try {
-    let record = owned(userId, id); progress('evaluating_fit'); await live(record);
+    let record = owned(userId, id); progress('evaluating_fit'); const identities = await live(record);
+    if (!record.value.publicIdentities) { record.value.publicIdentities = identities; persist(record, 'running', token); record = owned(userId, id); }
     const { snapshot } = record.value;
     const semanticAssessment = await assessPair(record.row.left_user, snapshot.leftIntent, record.row.right_user, snapshot.rightIntent);
     current(record); progress('exchanging_context');
@@ -128,7 +161,9 @@ async function execute(userId: string, id: string, version: number, checkSession
     const result = await ai().qualifyIntroduction({ left, right, purpose: snapshot.leftIntent.goal, maxRounds: 3,
       ...(retry && record.value.checkpoint ? { checkpoint: record.value.checkpoint } : record.value.result ? { priorState: record.value.result } : {}),
       ownerAnswers: record.value.answers.filter(answer => !(retry ? record.value.checkpoint ?? record.value.result : record.value.result)?.answers.some(prior => prior.questionId === answer.questionId)).map(({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent }) => ({ questionId, ownerAgentId, fieldId, answeredAt, providerDisclosureConsent })),
-      beforeInference: (reservation, checkpoint) => atomic(() => {
+      beforeInference: async (reservation, checkpoint) => {
+        await currentPublicIdentities(owned(userId, id));
+        return atomic(() => {
         checkSession(); progress('exchanging_context'); const active = owned(userId, id); current(active);
         if (active.row.state !== 'running' || active.row.lease_token !== token) throw new HttpError(409, 'QUALIFICATION_STOPPED', 'This review was stopped.');
         const attempts = active.value.attempts;
@@ -137,14 +172,18 @@ async function execute(userId: string, id: string, version: number, checkSession
           || attempts.reduce((sum, attempt) => sum + attempt.reservedCostUsd, 0) + reservation.reservedCostUsd > costLimit()) throw new HttpError(409, 'QUALIFICATION_BUDGET', 'This conversation reached its request or cost limit. No new model request was sent.');
         attempts.push(reservation); active.value.checkpoint = checkpoint;
         active.value.failureCode = undefined; active.value.retryable = false; persist(active, 'running', token);
-      }),
-      onProgress: event => atomic(() => {
+        });
+      },
+      onProgress: async event => {
+        if (event.kind === 'turn_completed' || event.kind === 'state_completed') await currentPublicIdentities(owned(userId, id));
+        return atomic(() => {
         checkSession(); progress('exchanging_context'); const active = owned(userId, id); current(active);
         if (active.row.state !== 'running' || active.row.lease_token !== token) throw new HttpError(409, 'QUALIFICATION_STOPPED', 'This review was stopped.');
         if (event.kind === 'turn_completed') { active.value.messages.push(event.message); for (const question of event.ownerQuestions) if (!active.value.questions.some(previous => previous.id === question.id)) active.value.questions.push(question); }
         if (event.kind !== 'state_completed' && event.checkpoint) active.value.checkpoint = event.checkpoint;
         persist(active, 'running', token);
-      }) });
+        });
+      } });
     progress('rechecking_permissions'); await live(owned(userId, id)); checkSession();
     return atomic(() => {
       progress('rechecking_permissions'); record = owned(userId, id); current(record);

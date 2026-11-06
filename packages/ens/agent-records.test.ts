@@ -26,6 +26,15 @@ describe("draft ENS agent record formats", () => {
     expect(() => validatePublicAgentRecordValue("agent-context", JSON.stringify(context), "agent.bob.eth")).toThrow("agent_context_name_mismatch");
     expect(() => validatePublicAgentRecordValue("agent-endpoint[web]", "https://user:password@example.org/", context.ensName)).toThrow();
   });
+  it("allows approved context with no network endpoints and ENS-only registration metadata", () => {
+    const context = { type: "meeti-agent-context-v1", ensName: "agent.alice.eth", name: "Test", description: "A public description without a deployed service.", capabilities: ["discover"], endpoints: [] };
+    expect(publicAgentContextSchema.parse(context).endpoints).toEqual([]);
+    expect(publicAgentContextSchema.parse({ ...context, endpoints: undefined }).endpoints).toEqual([]);
+    expect(validatePublicAgentRecordValue("agent-context", JSON.stringify(context), context.ensName)).toBe(JSON.stringify(context));
+    const ensOnly = { ...registration, services: [registration.services[0]] };
+    expect(validateRegistrationAgreement(ensOnly, identity, "agent.alice.eth").services).toHaveLength(1);
+    expect(() => validatePublicAgentRecordValue("agent-endpoint[meeti-rest-v1]", "http://localhost:3173/api/context", context.ensName)).toThrow();
+  });
   it("requires both the exact registration tuple and claimed ENS service and uses bounded JSON data URIs", () => {
     expect(validateRegistrationAgreement(registration, identity, "agent.alice.eth")).toEqual(registration);
     expect(readRegistrationDataUri(registrationDataUri(registration))).toEqual(registration);

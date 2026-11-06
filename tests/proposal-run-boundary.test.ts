@@ -7,7 +7,11 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Agent, Intent } from '../packages/shared/src';
 
 // External decisions are fixtures. The route, sessions, lease, transaction and persistence are real.
-const providers = vi.hoisted(() => ({ authority: vi.fn(), readActive: vi.fn(), evaluate: vi.fn(), negotiate: vi.fn(), assess: vi.fn(), fresh: vi.fn() }));
+const providers = vi.hoisted(() => ({ authority: vi.fn(), readActive: vi.fn(), evaluate: vi.fn(), negotiate: vi.fn(), assess: vi.fn(), fresh: vi.fn(), identity: vi.fn() }));
+vi.mock('../packages/server/identity', async importOriginal => ({
+  ...await importOriginal<typeof import('../packages/server/identity')>(),
+  resolveCurrentPublicAgentIdentityForUser: providers.identity,
+}));
 vi.mock('../packages/server/policy', async importOriginal => ({
   ...await importOriginal<typeof import('../packages/server/policy')>(),
   authority: providers.authority,
@@ -83,6 +87,12 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-11-06T10:00:00.000Z'));
   for (const mock of Object.values(providers)) mock.mockReset();
   providers.authority.mockImplementation(async (userId: string) => agent(userId));
+  providers.identity.mockImplementation(async (userId: string) => ({
+    ensName: agent(userId)!.ensName, owner: agent(userId)!.owner,
+    context: { state: 'absent' }, association: { state: 'absent' },
+    observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() },
+    authorityVerified: false, humanVerified: false,
+  }));
   providers.assess.mockResolvedValue({ eligible: true });
   providers.evaluate.mockResolvedValue({ output: { assessment: 'aligned', summary: 'Explicit local compatibility fixture' } });
   providers.negotiate.mockResolvedValue({ state: 'qualified', messages: [], ownerQuestions: [], answers: [], stopReason: 'mutual_criteria_supported' });
