@@ -395,7 +395,10 @@ export async function route(request: Request, path: string[]): Promise<Response>
         rateLimit('meeting:' + actor.id, 20);
         return ok(await meetingAction(actor.id, id, input, () => { requireUser(request); }));
       }
-      if (path[2] === 'consent') return ok(await consent(actor.id, id, z.object({ decision: z.enum(['approve', 'decline', 'revoke']) }).strict().parse(body).decision));
+      if (path[2] === 'consent') return ok(await consent(actor.id, id, z.object({ decision: z.enum(['approve', 'decline', 'revoke']) }).strict().parse(body).decision, () => {
+        const currentActor = requireUser(request);
+        if (currentActor.id !== actor.id || currentActor.wallet?.toLowerCase() !== actor.wallet?.toLowerCase()) throw new HttpError(403, 'ACCOUNT_CHANGED', 'Sign in again before recording your decision.');
+      }));
       if (path[2] === 'open') return ok(await openRoom(actor.id, id, () => { requireUser(request); }));
       if (path[2] === 'disclosure') {
         const { fieldId } = z.object({ fieldId: z.enum(['displayName', 'tags', 'headline', 'bio', 'seeking', 'offering', 'contact', 'employer', 'socialLinks', 'documentContext']) }).strict().parse(body);

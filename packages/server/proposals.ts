@@ -66,10 +66,11 @@ export function requireBothConsents(p: NonNullable<ReturnType<typeof proposal>>)
 export async function createProposal(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void, progress: (stage: RunningStage) => void = () => {}) {
   return startQualification(userId, ownIntentId, candidateKey, checkSession, progress);
 }
-export async function consent(userId: string, id: string, decision: 'approve' | 'decline' | 'revoke') {
+export async function consent(userId: string, id: string, decision: 'approve' | 'decline' | 'revoke', checkSession: () => void) {
   const p = ownedProposal(userId, id);
   if (decision === 'approve') await validatePair(p, 'introduce');
   return atomic(() => {
+    checkSession();
     if (decision === 'approve') assertPair(p);
     const prior = db().prepare('SELECT decision FROM consents WHERE proposal_id=? AND user_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(id, userId) as { decision: string } | undefined;
     if (prior?.decision === decision) return { decision };

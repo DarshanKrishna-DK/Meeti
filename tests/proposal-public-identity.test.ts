@@ -83,12 +83,12 @@ describe('post-proposal public identity boundaries with explicit provider fixtur
   it('accepts a linked qualified proposal only while both current identities match their reviewed bindings', async () => {
     const { p } = await introduction();
     await expect(validatePair(p, 'introduce')).resolves.toBeUndefined();
-    await consent(left.id, p.row.id, 'approve'); await consent(right.id, p.row.id, 'approve');
+    await consent(left.id, p.row.id, 'approve', () => {}); await consent(right.id, p.row.id, 'approve', () => {});
     expect(db().prepare('SELECT id FROM consents').all()).toHaveLength(2);
   });
 
   it.each(['removed', 'changed', 'wrong-tuple', 'revoked'])('denies %s identity after human approval without rewriting consent', async mode => {
-    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve'); await consent(right.id, p.row.id, 'approve');
+    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve', () => {}); await consent(right.id, p.row.id, 'approve', () => {});
     external.identity.mockImplementation(async (id: string) => {
       const value = identity(id, mode !== 'removed');
       if (id === right.id && mode === 'changed' && value.context.value) value.context.value.description = 'Changed public context';
@@ -101,7 +101,7 @@ describe('post-proposal public identity boundaries with explicit provider fixtur
   });
 
   it('blocks meeting negotiation and room-message access when a registration changes after approval', async () => {
-    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve'); await consent(right.id, p.row.id, 'approve');
+    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve', () => {}); await consent(right.id, p.row.id, 'approve', () => {});
     const roomId = randomUUID(); db().prepare('INSERT INTO rooms VALUES(?,?,?)').run(roomId, p.row.id, encrypt({ id: roomId, proposalId: p.row.id, title: 'Fixture room', introduction: '', createdAt: new Date().toISOString() }, `room:${roomId}`));
     external.identity.mockImplementation(async (id: string) => { const value = identity(id); if (value.association.identity) value.association.identity.agentId = '999'; return value; });
     await expect(meetingAction(left.id, p.row.id, { action: 'availability', version: 1, availability: { timezone: 'UTC', durationMinutes: 30, shareForThisMeeting: true,
@@ -113,7 +113,7 @@ describe('post-proposal public identity boundaries with explicit provider fixtur
   it('does not create a private original grant for a stale public identity', async () => {
     const first = createDocument(left.id, { name: 'fixture.txt', mimeType: 'text/plain', extractionStatus: 'ready', extractedText: 'PRIVATE FILE' }, Buffer.from('PRIVATE FILE'), () => {});
     const document = updateDocument(left.id, first.id, { expectedVersion: first.version, reviewedExcerpt: '', allowAgentContext: false, allowOriginalShare: true }, () => {});
-    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve'); await consent(right.id, p.row.id, 'approve');
+    const { p } = await introduction(); await consent(left.id, p.row.id, 'approve', () => {}); await consent(right.id, p.row.id, 'approve', () => {});
     const roomId = randomUUID(); db().prepare('INSERT INTO rooms VALUES(?,?,?)').run(roomId, p.row.id, encrypt({ id: roomId, proposalId: p.row.id }, `room:${roomId}`));
     external.identity.mockImplementation(async (id: string) => identity(id, false));
     await expect(handleContext(new Request(`${origin}/api/context/files/${document.id}/share`, { method: 'POST', headers: { origin, cookie: left.cookie, 'content-type': 'application/json' } }), `context/files/${document.id}/share`, { expectedVersion: document.version, proposalId: p.row.id })).rejects.toMatchObject({ code: 'PUBLIC_IDENTITY_CHANGED' });
