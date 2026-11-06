@@ -37,8 +37,8 @@ export function rateLimit(bucket: string, maximum: number, windowMs = 60000): vo
   const row = db().prepare('SELECT count FROM rate_limits WHERE bucket=?').get(bucket) as { count: number };
   if (row.count > maximum) throw new HttpError(429, 'RATE_LIMITED', 'Too many requests. Wait a minute and try again.');
 }
-export async function readBody(request: Request): Promise<unknown> {
-  if (Number(request.headers.get('content-length')) > 64000) throw new HttpError(413, 'BODY_TOO_LARGE', 'The request is too large.');
+export async function readBody(request: Request, maximumBytes = 64000): Promise<unknown> {
+  if (Number(request.headers.get('content-length')) > maximumBytes) throw new HttpError(413, 'BODY_TOO_LARGE', 'The request is too large.');
   const reader = request.body?.getReader();
   if (!reader) throw new HttpError(400, 'INVALID_JSON', 'A JSON request is required.');
   let total = 0;
@@ -47,7 +47,7 @@ export async function readBody(request: Request): Promise<unknown> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > 64000) { await reader.cancel(); throw new HttpError(413, 'BODY_TOO_LARGE', 'The request is too large.'); }
+    if (total > maximumBytes) { await reader.cancel(); throw new HttpError(413, 'BODY_TOO_LARGE', 'The request is too large.'); }
     chunks.push(value);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }

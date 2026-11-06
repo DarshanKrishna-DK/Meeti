@@ -10,7 +10,7 @@ import type { AppState, Goal, Candidate, Proposal } from '@/packages/shared/src'
 
 const brand = process.env.NEXT_PUBLIC_APP_NAME || 'Meeti';
 const goals: Goal[] = ['cofounder','collaborator','mentor','teammate'];
-const publicFields = ['displayName','headline','bio','seeking','offering','tags'];
+const publicFields = ['displayName','headline','bio','seeking','offering','tags','socialLinks','documentContext'];
 export { wallet } from './metamask';
 import { wallet, findMetaMask, type WalletChallenge } from './metamask';
 export async function renewWalletPermission(expectedAddress:string|null) {

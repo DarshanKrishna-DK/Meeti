@@ -5,7 +5,11 @@ export type Action = 'discover' | 'publish' | 'evaluate' | 'negotiate' | 'introd
 export type Profile = {
   displayName: string; headline: string; bio: string; seeking: string; offering: string;
   tags: string[]; contact: string; employer: string; publicFields: string[]; aiConsent: boolean;
+  socialLinks?: { label: string; url: string }[];
 };
+export type ContextDocument = { id: string; name: string; mimeType: 'application/pdf' | 'text/plain' | 'text/markdown'; size: number;
+  version: number; extractedText: string; extractionStatus: 'ready' | 'no-text' | 'failed';
+  reviewedExcerpt: string; allowAgentContext: boolean; allowOriginalShare: boolean; createdAt: string; updatedAt: string };
 export type Policy = { version: number; purpose: Goal; allowedFields: string[]; allowedActions: Action[]; expiresAt: string; paused: boolean };
 export type Agent = {
   id: string; ensName: string; owner: string; delegate: string; persona: string;

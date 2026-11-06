@@ -6,6 +6,7 @@ import { createEnsAuthorityProvider } from '../ens';
 import { createArkivAdapter, type PublicIntent } from '../arkiv/src';
 import { createProviderFromEnv, MeetiAgentService, type AgentParticipant } from '../agents/src';
 import { IntentSemanticsSchema } from '../matching/src/semantics';
+import { approvedContextFields, contextFieldAllowed } from './context-policy';
 
 export function policyDigest(policy: Policy): `0x${string}` {
   return keccak256(stringToHex(JSON.stringify({ version: policy.version, purpose: policy.purpose,
@@ -66,7 +67,8 @@ export function ai() {
     if (!ownerProfile.aiConsent) throw new HttpError(403, 'AI_CONSENT_REQUIRED', 'The owner has not permitted AI evaluation.');
     return { allowed: true, reason: 'Current ENS authority and purpose-specific disclosure policy verified.',
       policyVersion: value.policy.version, checkedAt: new Date().toISOString(), expiresAt: value.policy.expiresAt,
-      allowedFieldIds: request.fieldIds.filter(id => value.policy.allowedFields.includes(id) && ownerProfile.publicFields.includes(id) && !['contact', 'employer'].includes(id)) };
+      allowedFieldIds: request.fieldIds.filter(id => contextFieldAllowed(request.actorId, id, ownerProfile, value.policy)
+        || (value.policy.allowedFields.includes(id) && ownerProfile.publicFields.includes(id) && !['contact', 'employer', 'documentContext', 'socialLinks'].includes(id))) };
   });
 }
 export function participant(userId: string, intent: Intent): AgentParticipant {
@@ -75,6 +77,7 @@ export function participant(userId: string, intent: Intent): AgentParticipant {
   const p = profile(userId);
   return { userId, agentId: value.id,
     intent: { id: intent.id, version: intent.version, goal: intent.goal, summary: intent.summary, tags: intent.tags, expiresAt: intent.expiresAt },
-    fields: ['headline', 'bio', 'offering', 'seeking'].filter(id => p.publicFields.includes(id) && value.policy.allowedFields.includes(id))
-      .flatMap(id => { const field = p[id as keyof typeof p]; return typeof field === 'string' && field.trim() ? [{ id, label: id, value: field, visibility: 'public' as const }] : []; }) };
+    fields: [...['headline', 'bio', 'offering', 'seeking'].filter(id => p.publicFields.includes(id) && value.policy.allowedFields.includes(id))
+      .flatMap(id => { const field = p[id as keyof typeof p]; return typeof field === 'string' && field.trim() ? [{ id, label: id, value: field, visibility: 'public' as const }] : []; }),
+      ...approvedContextFields(userId, p).filter(field => contextFieldAllowed(userId, field.id, p, value.policy))] };
 }

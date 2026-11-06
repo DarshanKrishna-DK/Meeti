@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
-  serverExternalPackages: ["node:sqlite"],
+  serverExternalPackages: ["node:sqlite", "pdf-parse"],
+  outputFileTracingIncludes: { '/api/**': ['./scripts/extract-private-pdf.mjs', './node_modules/pdf-parse/**/*', './node_modules/pdfjs-dist/**/*', './node_modules/@napi-rs/canvas*/**/*'] },
   poweredByHeader: false,
   devIndicators: false,
   async headers() {

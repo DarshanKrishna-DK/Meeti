@@ -132,13 +132,13 @@ writeFileSync(new URL('../../components/artwork/instrument-geometry.ts', import.
   `export const instrumentGeometry = ${JSON.stringify(geometry)} as const;\n`);
 
 const ramps = {
-  lo: { fill: '#d6bfcc', top: '#e8d5de', line: '#98758a', shades: ['#aa889e', '#b795aa', '#c2a3b6', '#d0b6c5'] },
-  mid: { fill: '#dec5d1', top: '#f1dfe5', line: '#9b7589', shades: ['#b18b9f', '#bd9aaf', '#ccadbc', '#dcc1cd'] },
-  hi: { fill: '#e7cdd8', top: '#fff2f2', line: '#af8499', shades: ['#bf97aa', '#cda7b9', '#ddbdcb', '#ebd0db'] },
-  paper: { fill: '#f2e5df', top: '#fffaf3', line: '#b593a2', shades: ['#c2a6b1', '#d4bcc3', '#e4d0d3', '#f1e1de'] },
-  rose: { fill: '#c5789f', top: '#e9afc8', line: '#955373', shades: ['#a45b82', '#b76d93', '#ca86a8', '#dda0bb'] },
+  lo: { fill: '#3b2a3c', top: '#6e5368', line: '#241a2a', shades: ['#291f30', '#38263b', '#49334a', '#5a4057'] },
+  mid: { fill: '#6d5068', top: '#a28097', line: '#382638', shades: ['#493249', '#5b3d57', '#74516c', '#89657e'] },
+  hi: { fill: '#b292a9', top: '#eed7e1', line: '#624258', shades: ['#7e5b75', '#9b748d', '#bb95ad', '#d6b6c8'] },
+  paper: { fill: '#f4e7dd', top: '#fffaf0', line: '#a18690', shades: ['#baa0a9', '#d3b9c0', '#e3cbd0', '#efdcda'] },
+  rose: { fill: '#b16a91', top: '#e7aac6', line: '#6f3b59', shades: ['#79405e', '#995275', '#b87198', '#d28ead'] },
 };
-const palette = '.iso-line{fill:none;stroke:#98758a;stroke-width:.65;stroke-linecap:round;stroke-linejoin:round}.iso-crease{opacity:.3}.iso-bevel{opacity:.2}.iso-line[data-tone="faint"]{opacity:.25}.iso-line[data-tone="lo"]{opacity:.5}.iso-line[data-tone="hi"]{stroke:#fff8f3}' +
+const palette = '.iso-line{fill:none;stroke:#a5839b;stroke-width:.65;stroke-linecap:round;stroke-linejoin:round}.iso-crease{opacity:.35}.iso-bevel{opacity:.35}.iso-line[data-tone="faint"]{opacity:.35}.iso-line[data-tone="lo"]{opacity:.65}.iso-line[data-tone="hi"]{stroke:#fff8f3}' +
   Object.entries(ramps).map(([tone, ramp]) => {
     const selector = `.iso-solid[data-tone="${tone}"]`;
     return `${selector}>.iso-fill{fill:${ramp.fill}}${selector}>.iso-top{fill:${ramp.top}}` +

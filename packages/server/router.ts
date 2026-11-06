@@ -21,6 +21,9 @@ import { handleWalletAuth } from './wallet-auth';
 import { handleOnboarding } from './onboarding';
 import { handleAgentImport } from './agent-import';
 import { agentRuns, withAgentRun } from './agent-runs';
+import { handleContext } from './context';
+import { policyHistory } from './policy-history';
+import { approvedDocumentContext } from './context-store';
 
 function ok(data: unknown, cookie?: string): Response {
   return Response.json({ data }, { headers: { 'Cache-Control': 'no-store', ...(cookie ? { 'Set-Cookie': cookie } : {}) } });
@@ -70,7 +73,14 @@ export async function route(request: Request, path: string[]): Promise<Response>
       const onboarding = handleOnboarding(request, key);
       if (onboarding) return onboarding;
       const actor = requireUser(request);
+      const context = await handleContext(request, key);
+      if (context) return context;
       if (key === 'state') return ok(state(actor));
+      if (key === 'agent/policies') {
+        const current = agent(actor.id);
+        if (current) saveAgent(actor.id, current);
+        return ok(policyHistory(actor.id));
+      }
       if (key === 'operations') {
         const rows = db().prepare('SELECT * FROM operations WHERE user_id=? AND state IN (?,?) ORDER BY rowid DESC LIMIT 50').all(actor.id, 'prepared', 'submitted') as { id: string; kind: string; state: string; data: string; created_at: string }[];
         return ok(rows.map(x => ({ id: x.id, kind: x.kind, state: x.state, createdAt: x.created_at, data: decrypt(x.data, `operation:${x.id}`) })));
@@ -90,7 +100,8 @@ export async function route(request: Request, path: string[]): Promise<Response>
     }
     if (request.method !== 'POST') throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'This request method is not supported.');
     checkOrigin(request);
-    const body = await readBody(request);
+    if (key === 'context/files') { const uploader = requireUser(request); rateLimit(`upload:${uploader.id}`, 10); }
+    const body = await readBody(request, key === 'context/files' ? 1410000 : 64000);
     const walletAuth = await handleWalletAuth(request, key, body);
     if (walletAuth) return walletAuth;
     const onboarding = handleOnboarding(request, key, body);
@@ -120,6 +131,8 @@ export async function route(request: Request, path: string[]): Promise<Response>
     }
     const actor = requireUser(request);
     rateLimit(`api:${actor.id}`, 120);
+    const context = await handleContext(request, key, body);
+    if (context) return context;
     const importedAgent = await handleAgentImport(request, key, body);
     if (importedAgent) return importedAgent;
     if (key === 'auth/logout') {
@@ -319,11 +332,14 @@ export async function route(request: Request, path: string[]): Promise<Response>
       if (path[2] === 'consent') return ok(await consent(actor.id, id, z.object({ decision: z.enum(['approve', 'decline', 'revoke']) }).strict().parse(body).decision));
       if (path[2] === 'open') return ok(await openRoom(actor.id, id, () => { requireUser(request); }));
       if (path[2] === 'disclosure') {
-        const { fieldId } = z.object({ fieldId: z.enum(['headline', 'bio', 'seeking', 'offering', 'contact', 'employer']) }).strict().parse(body);
+        const { fieldId } = z.object({ fieldId: z.enum(['displayName', 'tags', 'headline', 'bio', 'seeking', 'offering', 'contact', 'employer', 'socialLinks', 'documentContext']) }).strict().parse(body);
         const p = ownedProposal(actor.id, id); await validatePair(p, 'negotiate');
         const ownerId = p.row.left_user === actor.id ? p.row.right_user : p.row.left_user;
         const a = await authority(ownerId, 'negotiate');
-        const allowed = !['contact', 'employer'].includes(fieldId) && a.policy.allowedFields.includes(fieldId) && profile(ownerId).publicFields.includes(fieldId);
+        const ownerProfile = profile(ownerId);
+        const allowed = !['contact', 'employer'].includes(fieldId) && a.policy.allowedFields.includes(fieldId)
+          && (fieldId === 'documentContext' ? ownerProfile.aiConsent && Boolean(approvedDocumentContext(ownerId))
+            : ownerProfile.publicFields.includes(fieldId) && (fieldId !== 'socialLinks' || ownerProfile.aiConsent));
         audit(actor.id, 'disclosure_check', allowed ? 'allowed' : 'denied', `Field class: ${fieldId}. No field value returned.`);
         return ok({ allowed, reason: allowed ? 'This field is permitted by the current purpose-specific public disclosure policy.' : 'This field requires additional approval and protected release.' });
       }

@@ -15,7 +15,7 @@ export type ProposalData = {
   createdAt: string;
 };
 export type ProposalRow = { id: string; left_user: string; right_user: string; pair_key: string; status: string; digest: string; data: string };
-const schemaVersion = 3;
+const schemaVersion = 5;
 const cache = globalThis as typeof globalThis & { meetiDb?: { path: string; db: DatabaseSync; schemaVersion?: number } };
 export function db(): DatabaseSync {
   const path = resolve(/* turbopackIgnore: true */ process.env.DATABASE_PATH || '.local-data/meeti.sqlite');
@@ -26,6 +26,8 @@ export function db(): DatabaseSync {
   connection.exec(readFileSync(resolve('migrations/001_initial.sql'), 'utf8'));
   connection.exec(readFileSync(resolve('migrations/002_onboarding.sql'), 'utf8'));
   connection.exec(readFileSync(resolve('migrations/003_agent_runs.sql'), 'utf8'));
+  connection.exec(readFileSync(resolve('migrations/004_context.sql'), 'utf8'));
+  connection.exec(readFileSync(resolve('migrations/005_policy_history.sql'), 'utf8'));
   cache.meetiDb = { path, db: connection, schemaVersion };
   return connection;
 }
@@ -46,7 +48,12 @@ export function agent(id: string): Agent | null {
   return row ? decrypt<Agent>(row.data, `agent:${id}`) : null;
 }
 export function saveAgent(id: string, value: Agent): void {
-  db().prepare('INSERT INTO agents(id,user_id,data) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data').run(value.id, id, encrypt(value, `agent:${id}`));
+  const save = () => {
+    db().prepare('INSERT INTO agents(id,user_id,data) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data').run(value.id, id, encrypt(value, `agent:${id}`));
+    db().prepare('INSERT INTO policy_history(user_id,version,data,created_at) VALUES(?,?,?,?) ON CONFLICT(user_id,version) DO NOTHING')
+      .run(id, value.policy.version, encrypt({ ensName: value.ensName, delegate: value.delegate, persona: value.persona, policy: value.policy }, `policy-history:${id}:${value.policy.version}`), new Date().toISOString());
+  };
+  if (db().isTransaction) save(); else atomic(save);
 }
 export function intent(id: string): { userId: string; value: Intent } | null {
   const row = db().prepare('SELECT * FROM intents WHERE id=?').get(id) as IntentRow | undefined;

@@ -1,19 +1,51 @@
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
-import { ArrowRight, ArrowUpRight, Compass, Fingerprint, Globe2, Handshake, LockKeyhole, Menu, MessageCircle, ShieldCheck, Sparkles, Users, Wallet, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Compass, Fingerprint, Handshake, Menu, MessageCircle, ShieldCheck, Users, Wallet, X } from 'lucide-react';
 import { MEETI_TAGLINE } from '@/packages/shared/src/brand';
 import { Brand } from './workspace-features';
 import { ConnectionInstrument } from './connection-instrument';
 import { ProductDiagram } from './product-diagrams';
+import { ThemeToggle } from './theme-toggle';
+
+const foundations = [
+  { text: 'A clear reason to meet', mark: 'fold' },
+  { text: 'Identity with ENS', mark: 'weave' },
+  { text: 'Discovery with Arkiv', mark: 'orbit' },
+  { text: 'Mutual permission', mark: 'join' },
+] as const;
+
+function FoundationMark({ kind }: { kind: typeof foundations[number]['mark'] }) {
+  return <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+    {kind === 'fold' && <><path d="M8 32 27 8l10 24-10 24Z"/><path d="m27 8 29 24-29 24 10-24Z"/><path d="M8 32h48"/></>}
+    {kind === 'weave' && <><path d="M14 9c32 0 4 46 36 46M27 9c32 0 4 46 23 46M14 9C-5 9 23 55 14 55M27 9C8 9 36 55 27 55"/><path d="M9 19h43M12 32h40M12 45h43"/></>}
+    {kind === 'orbit' && <><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(-38 32 32)"/><ellipse cx="32" cy="32" rx="25" ry="12" transform="rotate(38 32 32)"/><path d="m32 21 9 11-9 11-9-11Z"/></>}
+    {kind === 'join' && <><path d="M32 12C5-3 4 48 32 52M32 12c27-15 28 36 0 40"/><path d="M32 12C18 21 18 43 32 52M32 12c14 9 14 31 0 40"/><path d="M12 32h40"/></>}
+  </svg>;
+}
+
+function FoundationsBelt() {
+  const [paused, setPaused] = useState(false);
+  return <section className="foundations-belt" aria-label="Product foundations" data-paused={paused}>
+    <div className="foundations-window">
+      <div className="foundations-track">
+        {[false, true].map(repeat => <ul className="foundations-sequence" key={String(repeat)} aria-hidden={repeat || undefined}>
+          {foundations.map(({ text, mark }) => <li key={text}><FoundationMark kind={mark}/><span>{text}</span></li>)}
+        </ul>)}
+      </div>
+    </div>
+    <button className="belt-control" type="button" onClick={() => setPaused(!paused)} aria-label={paused ? 'Play the decorative foundations belt' : 'Pause the decorative foundations belt'}>{paused ? 'Play' : 'Pause'}</button>
+  </section>;
+}
+
 export function Landing() {
   const [menu,setMenu]=useState(false);
   return <div className="landing">
     <a className="skip-link" href="#landing-content">Skip to content</a>
-    <header className="landing-nav"><Brand/><button className="public-menu icon-button" aria-label={menu?'Close main navigation':'Open main navigation'} aria-expanded={menu} aria-controls="public-navigation" onClick={()=>setMenu(!menu)}>{menu?<X size={22}/>:<Menu size={22}/>}</button><nav id="public-navigation" className={menu?'is-open':''} aria-label="Main navigation" onClick={()=>setMenu(false)}><a href="#why">Why Meeti</a><a href="#features">What you can do</a><a href="#how">How it works</a><a href="#privacy">Privacy</a><Link className="button secondary" href="/dashboard">Find your people<ArrowUpRight size={15}/></Link></nav></header>
+    <header className="landing-nav"><Brand/><button className="public-menu icon-button" aria-label={menu?'Close main navigation':'Open main navigation'} aria-expanded={menu} aria-controls="public-navigation" onClick={()=>setMenu(!menu)}>{menu?<X size={22}/>:<Menu size={22}/>}</button><nav id="public-navigation" className={menu?'is-open':''} aria-label="Main navigation" onClick={()=>setMenu(false)}><a href="#why">Why Meeti</a><a href="#features">What you can do</a><a href="#how">How it works</a><a href="#privacy">Privacy</a><Link className="button secondary" href="/dashboard">Find your people<ArrowUpRight size={15}/></Link></nav><ThemeToggle/></header>
     <main id="landing-content">
-      <section className="hero"><div className="hero-copy"><span className="intro-line"><span className="intro-flower" aria-hidden="true"><Sparkles size={15}/></span>A little intention goes a long way</span><h1>{MEETI_TAGLINE}</h1><p>There is someone who needs what you bring. Tell Meeti who you hope to meet, let your agent explore the fit, and keep the final hello in your hands.</p><div className="hero-actions"><Link className="button" href="/dashboard">Find your kind of connection<ArrowUpRight size={18}/></Link><a className="text-link" href="#how">Take a closer look<ArrowRight size={17}/></a></div><span className="hero-foot"><LockKeyhole size={15}/>Your context stays private. Your permission comes first.</span></div><div className="hero-figure"><ConnectionInstrument/></div></section>
-      <section className="belief-strip" aria-label="Product foundations"><span className="belief-lead">A clear reason to meet. A thoughtful way to get there.</span><span><Fingerprint size={19}/>Identity with ENS</span><span><Globe2 size={19}/>Discovery with Arkiv</span><span><LockKeyhole size={18}/>Mutual permission</span></section>
+      <section className="hero"><div className="hero-copy"><h1>{MEETI_TAGLINE}</h1><p>There is someone who needs what you bring. Tell Meeti who you hope to meet, let your agent explore the fit, and keep the final hello in your hands.</p><div className="hero-actions"><Link className="button" href="/dashboard">Find your kind of connection<ArrowUpRight size={18}/></Link><a className="text-link" href="#how">Take a closer look<ArrowRight size={17}/></a></div><span className="hero-foot">Your context stays private. Your permission comes first.</span></div><div className="hero-figure"><ConnectionInstrument/></div></section>
+      <FoundationsBelt/>
       <section id="why" className="product-section problem-section"><div className="product-copy"><span className="section-note">The problem with another cold hello</span><h2>More profiles.<br/>Less real connection.</h2><p>The right person can be a few introductions away. But endless scrolling, vague requests and messages without context make finding them feel like work.</p><p>You have something to offer. You need a better way to find the person it matters to.</p></div><ProductDiagram kind="problem"/></section>
       <section className="product-section solution-section"><ProductDiagram kind="solution"/><div className="product-copy"><span className="section-note">Meet with a reason</span><h2>A shared intention<br/>changes the conversation.</h2><p>Start with what you want to do together. Meeti turns that intention into a focused search, with an agent that can explore the context you allow.</p><p>You see why a connection could make sense. Both people decide before a protected introduction can open.</p><Link className="text-link" href="/dashboard">Make room for a possibility<ArrowUpRight size={17}/></Link></div></section>
       <section id="features" className="features-section"><div className="section-heading-public"><span className="section-note">Useful connections. Clear boundaries.</span><h2>A little help finding<br/>your kind of people.</h2><p>For the cofounder you have not met, the mentor with a different perspective, or the teammate who shares your curiosity.</p></div><div className="feature-grid">{[

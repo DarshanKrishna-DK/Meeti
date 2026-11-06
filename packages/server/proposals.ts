@@ -8,6 +8,7 @@ import { hasCurrentWorldVerification } from './world-store';
 import { requireWorldCapability, worldEnabled } from './capabilities';
 import { assessPair, freshPublicIntent } from './discovery';
 import type { RunningStage } from './agent-runs';
+import { privateSnapshotDigest } from './context-policy';
 
 export function ownedProposal(userId: string, id: string) {
   const p = requireValue(proposal(id), 'Introduction request was not found.', 404);
@@ -17,7 +18,7 @@ export function ownedProposal(userId: string, id: string) {
 export function assertPair(p: NonNullable<ReturnType<typeof proposal>>, expectedDigest = p.row.digest) {
   const fresh = requireValue(proposal(p.row.id), 'Introduction request is unavailable.', 404);
   if (fresh.row.digest !== expectedDigest || ['declined', 'revoked', 'expired', 'blocked'].includes(fresh.row.status)) throw new HttpError(409, 'PROPOSAL_INACTIVE', 'This introduction request is no longer active.');
-  if (p.value.leftProfileDigest !== hash(JSON.stringify(profile(p.row.left_user))) || p.value.rightProfileDigest !== hash(JSON.stringify(profile(p.row.right_user)))) {
+  if (p.value.leftProfileDigest !== privateSnapshotDigest(p.row.left_user) || p.value.rightProfileDigest !== privateSnapshotDigest(p.row.right_user)) {
     throw new HttpError(409, 'PROFILE_CHANGED', 'A profile or its sharing preferences changed. Create a fresh introduction request.');
   }
   const left = requireValue(intent(p.value.leftIntent.id), 'The first intent is unavailable.');
@@ -64,7 +65,7 @@ export async function createProposal(userId: string, ownIntentId: string, candid
   if (db().prepare('SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)').get(userId, other.userId, other.userId, userId)) throw new HttpError(403, 'BLOCKED', 'This candidate is blocked.');
   await authority(other.userId, 'negotiate', other.value.policyVersion);
   const semanticAssessment = await assessPair(userId, own.value, other.userId, other.value);
-  const leftProfileDigest = hash(JSON.stringify(profile(userId))), rightProfileDigest = hash(JSON.stringify(profile(other.userId)));
+  const leftProfileDigest = privateSnapshotDigest(userId), rightProfileDigest = privateSnapshotDigest(other.userId);
   const pairKey = [own.value.id + ':' + own.value.version, other.value.id + ':' + other.value.version].sort().join('|') + '|' + [a.policy.version, b.policy.version].sort().join(':') + '|' + [leftProfileDigest, rightProfileDigest].sort().join(':');
   const existing = db().prepare('SELECT id FROM proposals WHERE pair_key=?').get(pairKey) as { id: string } | undefined;
   if (existing) return { id: existing.id };
@@ -87,7 +88,7 @@ export async function createProposal(userId: string, ownIntentId: string, candid
     progress('rechecking_permissions');
     const currentA = agent(userId), currentB = agent(other.userId);
     if (!currentA || !currentB || policyDigest(currentA.policy) !== policyDigest(a.policy) || policyDigest(currentB.policy) !== policyDigest(b.policy)) throw new HttpError(409, 'POLICY_CHANGED', 'Permissions changed during evaluation.');
-    if (hash(JSON.stringify(profile(userId))) !== leftProfileDigest || hash(JSON.stringify(profile(other.userId))) !== rightProfileDigest) throw new HttpError(409, 'PROFILE_CHANGED', 'A profile changed during evaluation.');
+    if (privateSnapshotDigest(userId) !== leftProfileDigest || privateSnapshotDigest(other.userId) !== rightProfileDigest) throw new HttpError(409, 'PROFILE_CHANGED', 'A profile changed during evaluation.');
     const left = requireValue(intent(own.value.id), 'Intent unavailable.'), right = requireValue(intent(other.value.id), 'Intent unavailable.');
     assertIntent(left.value); assertIntent(right.value);
     if (left.value.version !== own.value.version || right.value.version !== other.value.version) throw new HttpError(409, 'INTENT_CHANGED', 'An intent changed during evaluation.');

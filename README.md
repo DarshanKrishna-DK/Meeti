@@ -296,6 +296,50 @@ npm run dev
 
 The reset command selects a new empty database in .local-data and writes a local restore manifest. Previous encrypted databases, chain receipts and DATA_ENCRYPTION_KEY are preserved. Old session cookies do not authenticate against the fresh dataset. Sign in with MetaMask to see the new-user flow. To return to the earlier demo, stop the server, restore the previous DATABASE_PATH from the manifest in .env.local, then restart without changing the encryption key. This is a local dataset switch, not deletion of public ENS or Arkiv records. Existing Arkiv publications remain public, but their old private inbox records are not recreated in the fresh dataset. Restore the previous database to replay that prior demo, or complete onboarding and approve new publications for both fresh test accounts.
 
+### Appearance, private context and policy controls
+
+Use the **Dark** or **Light** button in the landing navigation or workspace header to change appearance. The choice persists in this browser and synchronizes across its tabs. Cream and pink remain the default. The foundation strap is an explanatory design element, with pause/play, focus/hover pause and a static reduced-motion layout. It does not represent live network traffic.
+
+**Your profile** contains your general context: who you are, what you seek and what you can offer. **Your intents** contains a specific current request to publish and match. Editing a profile does not publish an intent.
+
+1. In **Your profile**, open **What connects you**, then **Add a link**. Add a label and HTTPS URL, up to six links. Links are private by default and are not automatically fetched, scraped or verified.
+2. In **Your privacy**, separately approve social links for agent context and choose AI consent. The active ENS policy must also allow social links before they reach a model or counterpart agent.
+3. In **Your private context library**, choose a PDF, UTF-8 TXT or Markdown file and select **Upload private file**. Maximum size is 1 MiB each, with five files and 5 MiB total per account. DOCX, images, archives and executable/HTML files are unsupported.
+4. Inspect **Review extracted text**. PDF extraction covers the first five pages and does not perform OCR. A scanned, corrupt or unsupported document can have no usable preview; no text is invented. The original and preview stay encrypted in the private backend.
+5. Write a **Reviewed agent excerpt**, up to 1,200 characters. Include only information you deliberately want a permitted agent to process or exchange. Enable its separate checkbox and save. Uploading a file alone never approves model use, sharing or publication.
+6. In **Agent Studio**, enable **Reviewed document excerpts** or **Social links** only if wanted, save the policy version, then separately review its ENS policy publication. Permission classes and their digest can be public; file contents, excerpts and links are not written to ENS or Arkiv.
+7. Finish profile, intent and agent-context edits before requesting a proposal. Changing an approved excerpt or profile invalidates older proposal snapshots. After changing the policy, review and republish the intent under its new policy version before discovering again. Editing an original-file sharing flag alone does not alter the agent input.
+8. **Download my original** is owner-only. Original sharing requires per-file approval, a separate explicit grant to a protected introduction, both participants' consent, current ENS authority and valid World approval. Grants bind a file version and expire within fifteen minutes. World is paused, so this release stays locked. Revocation stops later downloads; it cannot erase earlier downloaded copies. No file link or message is sent to another person automatically.
+
+The policy manager has one active purpose and a versioned permission set. Recommended defaults expire after seven days and allow the six networking actions below, while social links and document excerpts remain off. Private contact and employer fields remain locked. Defaults are a draft until saved and genuinely authorized through ENS.
+
+| Policy option | Meaning |
+|---|---|
+| Purpose | Cofounder, collaborator, mentor or teammate context; hiring/job intent direction is interpreted separately under collaborator |
+| Discover | Search active eligible public intents |
+| Publish | Prepare owner-reviewed public intent publication; a wallet transaction is still required |
+| Evaluate | Ask the configured model to assess permitted context |
+| Exchange | Allow a bounded permissioned agent dialogue |
+| Introduce | Propose an introduction; this is not either human's consent |
+| Room messages | Permit messaging only after all existing protected-room gates pass |
+| Shareable fields | Limit context independently of the model and owner profile/file approval |
+| Expiry and pause | Stop new actions after expiration or while paused |
+| Reset draft to recommended defaults | Change the editable draft only; it does not change live ENS permissions |
+| Saved policy version history | Inspect private snapshots and copy an old version into a new draft; saving creates a new version requiring matching ENS authority |
+
+### Test wallets and free network tokens
+
+Use distinct wallets in separate browser profiles or devices for the two participants. Ordinary windows in one profile share cookies. Neither participant needs a Meeti token or their own AI/Arkiv API key.
+
+| Wallet action | Required test funding |
+|---|---|
+| Sign in, edit private context, discover, read activity or decide consent | None |
+| Change ENS identity, policy, delegation or status | Sepolia test ETH in the wallet sending that transaction |
+| Register a new Sepolia parent name | Test registration USDC and Sepolia test ETH; existing configured identities do not require registration again |
+| Publish or renew an Arkiv intent | Rabdi test GLM in that publishing wallet |
+
+A separate delegate needs test ETH only when it sends an ENS transaction. Mainnet names involve real fees and are outside this demo's free testnet setup. Use current official faucet links in the [Arkiv hub](https://hub.arkiv.network/networks) and [ENS testing guidance](https://docs.ens.domains/ensv2/tutorial-app-developers/). Always use the actual transaction estimate and a deliberate fee cap; do not treat a past fee as a guarantee. In the current publication review, **Maximum fee in wei** expects an integer: for example, 10000000000000000 wei is a ceiling of 0.01 test GLM. This is an example budget, not a quoted fee. The actual review can reject a budget that is too low.
+
 ### Troubleshooting local startup
 
 | Symptom | Action |
@@ -413,7 +457,7 @@ Run npm run demo:doctor -- --target=vercel to see the current deployment blocker
 
 Browser tests run the optimized production build with an isolated database and port 3198. Run npm run build before npm run test:e2e. Stop any server using the same build before rebuilding. Browser tests do not use the development hot-reload server. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to an installed Chromium executable if needed. Fixture checks do not establish live sponsor success. Real-provider drivers remain separate and do not authorize extra public writes.
 
-Latest local validation on 6 November 2026: **379 unit/integration tests across nineteen files and all 24 optimized-production browser cases passed**, together with lint, type generation, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, generated-EOA signed wallet login, replay denial, independent owners, guided profile privacy, persisted tour, session races, draft conflicts, time zones, navigation, WebGL and SVG fallback. The controlled browser wallet signs real cryptographic challenges; this does not establish testing of the installed MetaMask extension. Physical-phone, deployed-origin and fresh live chain-writing checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
+Latest local validation on 6 November 2026: **413 unit/integration tests across twenty-one files and all 30 optimized-production browser cases passed**, together with lint, type generation, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, generated-EOA signed wallet login, replay denial, independent owners, guided profile privacy, persisted tour, session races, draft conflicts, time zones, navigation, WebGL and SVG fallback. New checks cover real PDF extraction, file tenancy and version conflicts, link permissions, policy history, both-theme route samples and reduced-motion strap wrapping. Tested desktop hero bounds end at 720px in a 1280 by 720 viewport and 900px in a 1440 by 900 viewport; navigation is 72px desktop and 64px mobile. The controlled browser wallet signs real cryptographic challenges; this does not establish testing of the installed MetaMask extension. Physical-phone, deployed-origin and fresh live chain-writing checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
 
 <details>
 <summary><strong>Project map and repository hygiene</strong></summary>

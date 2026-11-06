@@ -8,14 +8,15 @@ export const profileSchema = z.object({
   displayName: z.string().trim().min(1).max(100), headline: z.string().max(200), bio: z.string().max(1500),
   seeking: z.string().max(1500), offering: z.string().max(1500), tags: z.array(z.string().max(32)).max(8),
   contact: z.string().max(300), employer: z.string().max(200),
-  publicFields: z.array(z.enum(['displayName', 'headline', 'bio', 'seeking', 'offering', 'tags'])).max(6), aiConsent: z.boolean(),
+  publicFields: z.array(z.enum(['displayName', 'headline', 'bio', 'seeking', 'offering', 'tags', 'socialLinks'])).max(7).refine(values => new Set(values).size === values.length), aiConsent: z.boolean(),
+  socialLinks: z.array(z.object({ label: z.string().trim().min(1).max(60), url: z.string().trim().max(500).url().refine(value => { try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; } catch { return false; } }, 'Use an HTTPS link without embedded credentials.') }).strict()).max(6).refine(values => new Set(values.map(value => value.url)).size === values.length, 'Remove duplicate links.').optional(),
 }).strict();
 export const agentSchema = z.object({
   ensName: z.string().trim().toLowerCase().regex(/^[a-z0-9-]+(?:\.[a-z0-9-]+){1,6}\.eth$/).max(253),
   delegate: addressSchema, persona: z.string().max(1000), resolverAddress: addressSchema.optional().or(z.literal('')),
   policyUri: z.string().url().startsWith('https://').max(2048).optional().or(z.literal('')),
   policy: z.object({ purpose: goalSchema,
-    allowedFields: z.array(z.enum(['displayName', 'headline', 'bio', 'seeking', 'offering', 'tags', 'contact', 'employer'])).max(8),
+    allowedFields: z.array(z.enum(['displayName', 'headline', 'bio', 'seeking', 'offering', 'tags', 'contact', 'employer', 'socialLinks', 'documentContext'])).max(10).refine(values => new Set(values).size === values.length),
     allowedActions: z.array(z.enum(['discover', 'publish', 'evaluate', 'negotiate', 'introduce', 'message'])).max(6),
     expiresAt: z.string().datetime().refine(x => Date.parse(x) > Date.now() && Date.parse(x) <= Date.now() + 30 * 86400000), paused: z.boolean(),
   }).strict(),

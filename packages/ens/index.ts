@@ -30,7 +30,7 @@ const policyActionSchema = z.enum(["discover", "publish", "evaluate", "negotiate
 export const inlinePolicySchema = z.object({
   version: z.number().int().positive().safe(),
   purpose: z.enum(["cofounder", "collaborator", "mentor", "teammate"]),
-  allowedFields: z.array(z.enum(["displayName", "headline", "bio", "offering", "seeking", "tags", "contact", "employer"])).max(8).refine((values) => new Set(values).size === values.length),
+  allowedFields: z.array(z.enum(["displayName", "headline", "bio", "offering", "seeking", "tags", "contact", "employer", "socialLinks", "documentContext"])).max(10).refine((values) => new Set(values).size === values.length),
   allowedActions: z.array(policyActionSchema).min(1).max(6).refine((values) => new Set(values).size === values.length),
   expiresAt: z.string().datetime({ offset: true }),
   paused: z.boolean(),
