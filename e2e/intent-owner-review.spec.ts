@@ -63,6 +63,7 @@ test('owner corrects strength, reapproves exact fields, and persists a private d
   const response = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
   await save.click();
   expect((await request).postDataJSON()).toMatchObject({ publicApproved: true, semantics: { requirements: [{ ...semantics.requirements[0], strength: 'preferred' }] } });
+  expect((await request).postDataJSON()).not.toHaveProperty('expectedVersion');
   const savedResponse = await response;
   expect(savedResponse.status(), await savedResponse.text()).toBe(200);
   await expect.poll(async () => (await currentState(context, baseURL!)).intents.length).toBe(1);
@@ -96,4 +97,46 @@ test('resolving one generated strength question preserves other unknowns and ess
   await expect(review.getByText(essential, { exact: true })).toBeVisible();
   await page.getByRole('checkbox', { name: approvalLabel, exact: true }).check();
   await expect(page.getByRole('button', { name: 'Save reviewed intent', exact: true })).toBeDisabled();
+});
+
+test('stale intent edit retains the draft and requires loading the latest reviewed revision', async ({ page, context, baseURL }) => {
+  await openReview(page, context, baseURL!);
+  const approval = page.getByRole('checkbox', { name: approvalLabel, exact: true });
+  const save = page.getByRole('button', { name: 'Save reviewed intent', exact: true });
+  await approval.check();
+  const initialResponse = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
+  await save.click();
+  expect((await initialResponse).status()).toBe(200);
+  await expect(page.getByRole('button', { name: 'Edit intent', exact: true })).toBeVisible();
+  const [initial] = (await currentState(context, baseURL!)).intents;
+  await page.getByRole('button', { name: 'Edit intent', exact: true }).click();
+  const strength = page.getByLabel('Strength for requirement 1: writing learning guides', { exact: true });
+  await strength.selectOption('preferred'); await approval.check();
+  // A separate authenticated request advances the persisted revision without refreshing this editor.
+  const update = await context.request.post(`${baseURL}/api/intent`, { headers: { origin: baseURL! }, data: {
+    id: initial.id, expectedVersion: initial.version, goal: initial.goal, summary: initial.summary, tags: initial.tags,
+    expiresAt: initial.expiresAt, publicApproved: true, demoOrigin: initial.demoOrigin, semantics: initial.semantics,
+  } });
+  expect(update.status(), await update.text()).toBe(200);
+  const rejected = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
+  await save.click();
+  const stale = await rejected;
+  expect(stale.request().postDataJSON()).toMatchObject({ id: initial.id, expectedVersion: initial.version });
+  expect(stale.status()).toBe(409);
+  expect(await stale.json()).toMatchObject({ error: { code: 'INTENT_CHANGED' } });
+  await expect(page.getByRole('alert').filter({ hasText: 'Load and review the latest revision before saving.' }).first()).toBeVisible();
+  await expect(strength).toHaveValue('preferred');
+  expect((await currentState(context, baseURL!)).intents[0]).toMatchObject({ version: initial.version + 1, semantics: initial.semantics });
+  await page.getByRole('button', { name: 'Refresh workspace', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Your draft is retained' })).toBeVisible();
+  await expect(strength).toHaveValue('preferred'); await expect(save).toBeDisabled();
+  await page.getByRole('button', { name: 'Load latest intent revision', exact: true }).click();
+  await expect(strength).toHaveValue('mandatory'); await expect(approval).not.toBeChecked();
+  await strength.selectOption('preferred'); await approval.check();
+  const retried = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
+  await save.click();
+  const result = await retried;
+  expect(result.request().postDataJSON()).toMatchObject({ id: initial.id, expectedVersion: initial.version + 1 });
+  expect(result.status(), await result.text()).toBe(200);
+  await expect.poll(async () => (await currentState(context, baseURL!)).intents[0].version).toBe(initial.version + 2);
 });

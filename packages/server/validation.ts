@@ -31,7 +31,7 @@ export const agentSchema = z.object({
     expiresAt: z.string().datetime().refine(x => Date.parse(x) > Date.now() && Date.parse(x) <= Date.now() + 30 * 86400000), paused: z.boolean(),
   }).strict(),
 }).strict();
-export const intentInputSchema = z.object({ id: z.string().uuid().optional(), goal: goalSchema, summary: z.string().trim().min(10).max(1000),
+export const intentInputSchema = z.object({ id: z.string().uuid().optional(), expectedVersion: z.number().int().positive().safe().optional(), goal: goalSchema, summary: z.string().trim().min(10).max(1000),
   tags: tagsSchema, expiresAt: z.string().datetime().refine(x => Date.parse(x) > Date.now() + 60000 && Date.parse(x) <= Date.now() + 30 * 86400000),
   publicApproved: z.literal(true), demoOrigin: z.boolean().default(false),
   semantics: IntentSemanticsSchema.optional(),

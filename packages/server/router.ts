@@ -275,15 +275,19 @@ export async function route(request: Request, path: string[]): Promise<Response>
     }
     if (key === 'intent') {
       const input = intentInputSchema.parse(body);
-      const a = requireValue(agent(actor.id), 'Set up your agent before creating a networking intent.');
-      if (db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted')) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before editing an intent.');
-      if(input.semantics) assertIntentEvidence(input.summary,input.semantics);
-      const previous = input.id ? ownIntent(actor.id, input.id) : null;
-      const value: Intent = { id: previous?.id || randomUUID(), version: (previous?.version || 0) + 1,
-        goal: input.goal, summary: input.summary, tags: input.tags, expiresAt: input.expiresAt, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
-        status: 'draft', demoOrigin: input.demoOrigin, semantics: input.semantics };
-      saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache(); audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Public preview approved.`);
-      return ok(value);
+      return atomic(() => {
+        const a = requireValue(agent(actor.id), 'Set up your agent before creating a networking intent.');
+        if (db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted')) throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before editing an intent.');
+        if(input.semantics) assertIntentEvidence(input.summary,input.semantics);
+        const previous = input.id ? ownIntent(actor.id, input.id) : null;
+        if (previous && input.expectedVersion !== previous.version) throw new HttpError(409, 'INTENT_CHANGED', 'This intent changed or its reviewed revision is missing. Load and review the latest revision before saving.');
+        if (!previous && input.expectedVersion !== undefined) throw new HttpError(400, 'INVALID_INTENT_VERSION', 'Start a new intent without an existing revision.');
+        const value: Intent = { id: previous?.id || randomUUID(), version: (previous?.version || 0) + 1,
+          goal: input.goal, summary: input.summary, tags: input.tags, expiresAt: input.expiresAt, createdAt: new Date().toISOString(), policyVersion: a.policy.version,
+          status: 'draft', demoOrigin: input.demoOrigin, semantics: input.semantics };
+        saveIntent(actor.id, value); queueDiscovery(actor.id, value); clearEmbeddingCache(); audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Public preview approved.`);
+        return ok(value);
+      });
     }
     if (key === 'intent/close') {
       const { intentId } = z.object({ intentId: z.string().uuid() }).strict().parse(body);

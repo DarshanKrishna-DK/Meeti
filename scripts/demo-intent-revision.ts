@@ -68,7 +68,7 @@ async function main() {
         requireCheck(current.status === 'published' && current.arkivKey === old.entityKey && current.transactionHash === old.hash, 'original_application_publication_changed');
         await freshEns(); durable(progressPath, { editing: true, originalReviewSha256: originalHash }, 'meeti-demo-intent-revision-progress-v1');
         const next = correctedIntent(source.intent, new Date().toISOString());
-        current = await api<Intent>(saved, label, 'intent', { id: source.intent.intentId, goal: next.goal, summary: next.summary, tags: next.tags, expiresAt: next.expiresAt, publicApproved: true, demoOrigin: true, semantics: next.semantics });
+        current = await api<Intent>(saved, label, 'intent', { id: source.intent.intentId, expectedVersion: current.version, goal: next.goal, summary: next.summary, tags: next.tags, expiresAt: next.expiresAt, publicApproved: true, demoOrigin: true, semantics: next.semantics });
       }
       requireCheck(current.version === 2 && current.status === 'draft', 'only_unpublished_revision_two_may_be_reviewed');
       const preview = await api<{ intent: PublicIntent; signingMessage: string }>(saved, label, 'intent/publish', { intentId: source.intent.intentId }); assertOnlyReviewedRevision(source.intent, preview.intent);

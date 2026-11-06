@@ -47,7 +47,7 @@ afterEach(() => { closeDatabase(); vi.unstubAllEnvs(); rmSync(directory, { recur
 describe('intent closure post-permission commit fencing', () => {
   it('does not overwrite a newer draft saved while its permission check is pending', async () => {
     const owner = fixture(), close = delayedClose(owner); await close.ready;
-    const edit = await route(request(owner, 'intent', { id: owner.value.id, goal: 'collaborator', summary: 'Fictional newer owner-approved documentation request.', tags: ['documentation'],
+    const edit = await route(request(owner, 'intent', { id: owner.value.id, expectedVersion: owner.value.version, goal: 'collaborator', summary: 'Fictional newer owner-approved documentation request.', tags: ['documentation'],
       expiresAt: owner.value.expiresAt, publicApproved: true, demoOrigin: true }), ['intent']);
     expect(edit.status).toBe(200); const edited = (await edit.json()).data;
     close.release(); const result = await close.pending;

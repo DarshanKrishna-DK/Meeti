@@ -399,7 +399,9 @@ The same person can use their account on mobile and laptop through one shared ba
 
 Prepare both profiles before the proposal segment. Changing an intent, profile or permission later intentionally invalidates the older proposal and consent snapshot. Use that as a separate stale-state demonstration, rather than changing the happy-path accounts halfway through approval.
 
-The three existing live fictional records have an approved twenty-four-hour lifetime. Expired data must disappear rather than be silently reseeded. New publication, renewal and public edits require fresh review and applicable signing authorization.
+The approved fictional test publications have a twenty-four-hour lifetime. Expired data must stop matching rather than be silently reseeded. New publication, renewal and public edits require fresh review and applicable signing authorization.
+
+Intent edits are bound to the revision loaded by the editor. If another session saves first, the server rejects the stale save and preserves the unsaved form. Select **Refresh workspace**, then **Load latest intent revision**, review the changes and approve again. API clients must include the current `expectedVersion` when editing an existing intent and omit it when creating a new one.
 
 ### What to test before presenting
 

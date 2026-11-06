@@ -95,7 +95,7 @@ export function Intents({ state, run, busy }: Shared) {
         <form className="intent-review-form" onSubmit={event => { event.preventDefault(); void run(async () => {
           if (editingConflict) throw new Error('This intent changed in another session. Load its latest revision before saving.');
           if (!approved || !semantics || needsClarification) throw new Error('Review the interpretation, resolve clarification questions and approve the public fields before saving.');
-          await api('intent', { id: editingId || undefined, goal, summary, tags: normalizeTopics(topics.split(',')), expiresAt: new Date(expiry).toISOString(), publicApproved: approved, demoOrigin: demo, semantics });
+          await api('intent', { id: editingId || undefined, expectedVersion: editingId ? editingBase : undefined, goal, summary, tags: normalizeTopics(topics.split(',')), expiresAt: new Date(expiry).toISOString(), publicApproved: approved, demoOrigin: demo, semantics });
           newIntent();
         }, 'Intent draft saved below. Publication requires a separate wallet approval.'); }}>
           <div className="form-section-heading"><Globe2 size={20} /><h3>Make the public version yours.</h3></div>
