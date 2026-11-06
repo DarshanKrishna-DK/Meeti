@@ -38,7 +38,7 @@ function IdentitySetupForOwner({ state, onUpdated }: { state: AppState; onUpdate
     await api('identity/submitted', { operationId: prepared.operationId, hash: submittedHash });
   }
   if (!state.agent) return null;
-  return <section className="panel stack"><div><p className="eyebrow">Portable agent identity</p><h2>Publish a public agent card.</h2><p>ENS controls your permissions. The optional registry association lets another client check that your agent name and registration agree. It does not verify professional claims or human identity.</p></div>
+  return <section className="panel stack"><div><p className="eyebrow">Portable agent identity</p><span className="tag">Sepolia testnet demo</span><h2>Publish a public agent card.</h2><p>ENS controls your permissions. The optional registry association lets another client check that your agent name and registration agree. It does not verify professional claims or human identity.</p></div>
     {error && <p role="alert" className="error">{error}</p>}
     <p>{value?.association.verified ? 'Current ENS and registry association verified.' : value?.identity ? 'Registration confirmed. Its public metadata and ENS attestation still need verification.' : 'No confirmed registry identity is stored for this account.'}</p>
     {value?.identity && <p className="mono">Chain {value.identity.chainId} / {value.identity.registry} / Agent {value.identity.agentId}</p>}

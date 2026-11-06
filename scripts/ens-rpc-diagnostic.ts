@@ -19,7 +19,7 @@ function codes(error: unknown) {
 const seen = new Set<string>();
 const transactionHash = process.argv[2];
 if (transactionHash && !/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) throw new Error('Expected a public transaction hash.');
-for (const name of ['ENS_SEPOLIA_AUTH_RPC_URL', 'ENS_SEPOLIA_RPC_URL'] as const) {
+for (const name of ['ENS_SEPOLIA_AUTH_RPC_URL', 'ENS_SEPOLIA_RPC_URL', 'ENS_RPC_URL'] as const) {
   const url = process.env[name];
   if (!url) { console.log(JSON.stringify({ endpoint: name, configured: false })); continue; }
   if (seen.has(url)) { console.log(JSON.stringify({ endpoint: name, sameAsPrior: true })); continue; }

@@ -14,8 +14,8 @@ const stages = [
     description: 'Set narrow, revocable ENS permissions. Your agent can only share or update what those permissions allow.' },
   { label: 'Both decide', title: 'Two people. Two separate decisions.', status: 'Each person has their own say',
     description: 'Review the proposed introduction separately. It can continue only when both people consent.' },
-  { label: 'Protected intro', title: 'The final door stays locked.', status: 'Locked: World verification paused',
-    description: 'Even with both consents, protected introductions need fresh World validation. World is paused, so this door stays closed.' },
+  { label: 'Protected intro', title: 'The final door stays locked.', status: 'Locked: World is future scope',
+    description: 'World human verification is future scope and is not available in this demo. Protected introductions remain locked.' },
 ] as const;
 
 const settledWithin = .001;
@@ -157,7 +157,7 @@ export function ConnectionInstrument({ className = '' }: { className?: string })
             {selected === 0 && <><path d="M181 154V64H36" /><circle cx="181" cy="154" r="5" /><text x="36" y="52">Your public intent</text><path d="M257 122V28H300" /><circle cx="257" cy="122" r="5" /><text x="300" y="20">Their public intent</text></>}
             {selected === 1 && <><path d="M401 147V28H392" /><circle cx="401" cy="147" r="5" /><text x="384" y="20" textAnchor="end">Permission boundary</text><path className={styles.exchange} d="M328 226L391 201" /><text x="340" y="408" textAnchor="middle">Only what you allow passes through.</text></>}
             {selected === 2 && <><text x="340" y="22" textAnchor="middle">Neither person can decide for the other.</text><path d="M364 259V388H168" /><path d="M387 273V388H512" /><circle cx="364" cy="259" r="6" /><circle cx="387" cy="273" r="6" /><text x="168" y="408" textAnchor="end">Your decision</text><text x="512" y="408">Their decision</text></>}
-            {selected === 3 && <><rect className={styles.doorFocus} x="454" y="183" width="77" height="93" rx="16" /><path d="M492 183V28H508" /><text x="516" y="20">World paused</text><text x="340" y="408" textAnchor="middle">Door stays locked</text><path d="M489 276V306" /></>}
+            {selected === 3 && <><rect className={styles.doorFocus} x="454" y="183" width="77" height="93" rx="16" /><path d="M492 183V28H508" /><text x="516" y="20">World: future scope</text><text x="340" y="408" textAnchor="middle">Door stays locked</text><path d="M489 276V306" /></>}
           </g>
         </svg>
       </div>

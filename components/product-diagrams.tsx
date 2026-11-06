@@ -7,7 +7,7 @@ const summaries: Record<DiagramKind, { title: string; description: string }> = {
   problem: { title: 'A profile does not explain why you want to connect.', description: 'Two profile cards have names and interests, but a gap remains between them: what are they hoping to do together?' },
   solution: { title: 'Start with what you want to do.', description: 'Two example intent notes meet around a specific purpose. A proposed introduction still belongs to both people to review.' },
   privacy: { title: 'Share an intent. Keep your private context private.', description: 'A closed private notebook stays behind a permission boundary. Only an explicitly approved public intent can appear in discovery.' },
-  setup: { title: 'A name, an intent, and boundaries you control.', description: 'Setup begins with your ENS identity, your approved public intent, and your agent permissions. World verification is paused and the introduction gate remains locked.' },
+  setup: { title: 'A name, an intent, and boundaries you control.', description: 'Setup begins with your ENS identity, your approved public intent, and your agent permissions. World human verification is future scope and the introduction gate remains locked in this demo.' },
 };
 
 export function ProductDiagram({ kind, className = '' }: { kind: DiagramKind; className?: string }) {
@@ -112,7 +112,7 @@ function Setup() {
       <text className={styles.body} x="0" y="85" textAnchor="middle">{label}</text>
       <text className={styles.small} x="0" y="108" textAnchor="middle">{detail}</text>
     </g>)}
-    <g transform="translate(461 111)"><circle className={styles.lockDisc} r="29" /><LockKeyhole x={-12} y={-12} width={24} height={24} className={styles.icon} aria-hidden="true" /><text className={styles.small} x="0" y="84" textAnchor="middle">World</text><text className={styles.small} x="0" y="107" textAnchor="middle">Paused</text></g>
+    <g transform="translate(461 111)"><circle className={styles.lockDisc} r="29" /><LockKeyhole x={-12} y={-12} width={24} height={24} className={styles.icon} aria-hidden="true" /><text className={styles.small} x="0" y="84" textAnchor="middle">World</text><text className={styles.small} x="0" y="107" textAnchor="middle">Future scope</text></g>
     <path className={styles.rule} d="M55 255H485" />
     <text className={styles.label} x="270" y="290" textAnchor="middle">Your choices come before an introduction.</text>
   </>;

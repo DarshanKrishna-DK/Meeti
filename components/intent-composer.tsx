@@ -80,6 +80,7 @@ export function Intents({ state, run, busy }: Shared) {
   }
 
   return <>
+    <p className="small-copy"><Tag>Rabdi testnet demo</Tag> Public intent publication is a real testnet write. Review the exact fields, expiry and wallet transaction before confirming.</p>
     <DiscoverySchedule state={state} run={run} busy={busy} />
     <ol className="intent-workflow" aria-label="Intent publication steps"><li><span>1</span><div><strong>Shape the intention</strong><small>Private text, with your AI consent</small></div></li><li><span>2</span><div><strong>Review what travels</strong><small>Explicit public fields and expiry</small></div></li><li><span>3</span><div><strong>Approve the publication</strong><small>A separate wallet transaction</small></div></li></ol>
     <div className="editor-grid intent-composition">

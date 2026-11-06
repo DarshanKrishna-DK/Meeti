@@ -55,7 +55,7 @@ function publicIdentity(userId: string, registered = false) {
     association: registered ? { state: 'verified', identity } : { state: 'absent' },
     observed: { chainId: 11155111, blockNumber: '1', checkedAt: new Date().toISOString() }, authorityVerified: false, humanVerified: false };
 }
-function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false, duplicateFirstCriterion = false) {
+function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: number) => Promise<void>, missingFirstRound = false, duplicateFirstCriterion = false, malformedFirstQuote = false) {
   let calls = 0;
   const transport = vi.fn<typeof fetch>(async (_url, init) => {
     calls++;
@@ -64,11 +64,11 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
     const data = JSON.parse(JSON.parse(String(init?.body)).messages[1].content).untrustedData as {
       self: { evidence: { reference: string; value: string }[] }; other: { evidence: { reference: string; value: string }[] }; rubric: { id: string }[]; round: number;
     };
-    const evidence = [data.self, data.other].map(p => ({ reference: p.evidence[0].reference, quote: p.evidence[0].value }));
+    const evidence = [data.self, data.other].map(p => ({ reference: p.evidence[0].reference, quote: calls === 1 && malformedFirstQuote ? 'UNTRUSTED_INLINE_QUOTE_NOT_IN_APPROVED_SOURCE' : p.evidence[0].value }));
     const missing = missingFirstRound && data.round === 1;
     return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidenceReferences: missing && c.id === 'scope_expectations' ? [] : evidence.map(e => e.reference) })),
-      peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds: [], evidence,
+      message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidence: missing && c.id === 'scope_expectations' ? [] : evidence })),
+      peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds: [],
     }) } }], usage: { prompt_tokens: 2, completion_tokens: 2 } }));
   });
   // A new adapter per invocation simulates process restart. The SQL ledger must still bound all requests.
@@ -80,6 +80,16 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
   return transport;
 }
 describe('persisted qualification boundaries with fixture providers', () => {
+  it('persists a safe failure for an inline quote outside the approved sources without accepting a transcript', async () => {
+    const transport = modelFixture([], 0, undefined, false, false, true);
+    await expect(start()).rejects.toMatchObject({ code: 'output' });
+    const dto = listQualificationDtos(left.id)[0], saved = qualificationRecord(dto.id)!;
+    expect(dto).toMatchObject({ state: 'blocked', failureCode: 'AGENT_output_evidence', canRetry: true, attemptsUsed: 1 });
+    expect(dto.messages).toEqual([]); expect(saved.value.messages).toEqual([]);
+    expect(JSON.stringify({ dto, saved: saved.value })).not.toContain('UNTRUSTED_INLINE_QUOTE_NOT_IN_APPROVED_SOURCE');
+    expect(transport).toHaveBeenCalledTimes(1); expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
+  });
+
   it('classifies a transient identity read before a retry model call and preserves the original request ledger', async () => {
     const transport = modelFixture([1]); await expect(start()).rejects.toMatchObject({ code: 'provider' });
     const first = listQualificationDtos(left.id)[0], attempts = structuredClone(qualificationRecord(first.id)!.value.attempts);
