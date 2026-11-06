@@ -1,5 +1,7 @@
 # Reach and publication evidence
 
+Meeti: Good connections begin with a little intent.
+
 Measured adoption, external users, and public distribution: not measured. No numerical reach claims are made.
 
 | Evidence | Current result |

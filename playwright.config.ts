@@ -15,7 +15,7 @@ export default defineConfig({
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {},
   },
   webServer: {
-    command: `node node_modules/next/dist/bin/next dev --hostname 127.0.0.1 --port ${port}`,
+    command: `node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port ${port}`,
     url: `${baseURL}/api/health`,
     timeout: 120000,
     reuseExistingServer: false,
@@ -23,7 +23,7 @@ export default defineConfig({
       DATABASE_PATH: join(process.cwd(), '.local-data', `e2e-${randomUUID()}.sqlite`),
       DATA_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
       ENS_SEPOLIA_RPC_URL: '', ENS_SEPOLIA_AUTH_RPC_URL: '', ARKIV_ACCESS_KEY: '', AI_API_KEY: '', WORLD_CLIENT_ID: '', WORLD_CLIENT_SECRET: '', WORLD_CAPABILITY_ENABLED: 'false',
-      NEXT_DIST_DIR: '.next-e2e',
+      NEXT_DIST_DIR: '.next',
     },
   },
 });

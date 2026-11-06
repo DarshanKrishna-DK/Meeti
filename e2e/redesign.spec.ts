@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
@@ -27,6 +27,8 @@ async function createAccount(context: BrowserContext, baseURL: string) {
     headers: { origin: baseURL }, data: { email, password },
   });
   expect(result.status()).toBe(200);
+  const tour = await context.request.post(`${baseURL}/api/onboarding`, { headers: { origin: baseURL }, data: { tourCompleted: true } });
+  expect(tour.status()).toBe(200);
   return { email, password };
 }
 async function state(context: BrowserContext, baseURL: string): Promise<AppState> {
@@ -99,6 +101,10 @@ for (const width of [320, 390, 768, 1440]) {
       await page.goto(`/${route}`);
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(1);
+      if (route === 'dashboard') {
+        await expect(page.getByRole('button', { name: 'Continue guided setup', exact: true })).toBeVisible();
+        await expect(page.locator('.dashboard-setup').getByText('Saved', { exact: true })).toHaveCount(0);
+      }
       const dimensions = await noOverflow(page);
       const visibleButtons = await page.getByRole('button').evaluateAll(elements => elements
         .filter(element => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; })
@@ -321,10 +327,10 @@ test('does not restore a private workspace from an older state response after lo
     const deniedState = page.waitForResponse(response => response.url().endsWith('/api/state') && response.request().method() === 'GET' && response.status() === 401);
     await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     expect((await loggedOut).status()).toBe(200);
-    await expect(page.getByLabel('Email address', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sign in with MetaMask to open your private workspace.', { exact: false })).toBeVisible();
     held.release();
     expect((await deniedState).status()).toBe(401);
-    await expect(page.getByLabel('Email address', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect MetaMask', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Signed-in account', { exact: true })).not.toContainText(original.profile.displayName);
   } finally {
@@ -381,5 +387,31 @@ test('supports mobile navigation dismissal and keyboard focus return with reduce
   await toggle.click();
   await page.getByRole('link', { name: 'Your profile', exact: true }).click();
   await expect(page.getByLabel('Your name', { exact: true })).toBeVisible();
+  await noOverflow(page);
+});
+
+test('collapses desktop navigation while retaining accessible destinations and keyboard operation', async ({ page, context, baseURL }) => {
+  await createAccount(context, baseURL!);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/dashboard');
+  await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+  const navigation = page.getByRole('complementary', { name: 'Workspace navigation', exact: true });
+  const expandedWidth = await navigation.evaluate(element => element.getBoundingClientRect().width);
+  const collapse = page.getByRole('button', { name: 'Collapse navigation', exact: true });
+  await collapse.focus();
+  await page.keyboard.press('Enter');
+  const expand = page.getByRole('button', { name: 'Expand navigation', exact: true });
+  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await expect.poll(() => navigation.evaluate(element => element.getBoundingClientRect().width)).toBeLessThan(expandedWidth);
+  const destination = navigation.getByRole('link', { name: 'Your profile', exact: true });
+  await expect(destination).toHaveAccessibleName('Your profile');
+  await destination.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByLabel('Your name', { exact: true })).toBeVisible();
+  await expect(expand).toBeVisible();
+  await expand.focus();
+  await page.keyboard.press('Space');
+  await expect(collapse).toHaveAttribute('aria-expanded', 'true');
   await noOverflow(page);
 });

@@ -1,5 +1,7 @@
 # Public intent schema
 
+Meeti: Good connections begin with a little intent.
+
 Network: Rabdi, chain ID `7794095`. SDK: `@arkiv-network/sdk@1.0.1`. Named schema: `meeti.public_intent.v1`. The schema name is a public convention, not authentication.
 
 | Column | SDK type | Indexed | Meaning |

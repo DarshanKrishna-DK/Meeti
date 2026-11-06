@@ -1,5 +1,7 @@
 # How the application uses Arkiv
 
+Meeti: Good connections begin with a little intent.
+
 Arkiv is the authoritative shared index of active, explicitly public networking intents. The Discover UI must call the server adapter. The server uses its private `ARKIV_ACCESS_KEY` to query Rabdi. There is no database, fixture, or seeded fallback for public discovery.
 
 Publishing starts with a reviewed public preview. The owner signs `intentSigningMessage(intent)` with the connected wallet. The server verifies that exact projection, current ENS authority, and session ownership before preparing a transaction. The Arkiv adapter uses the documented SDK through an unsigned transport that refuses every RPC method except an explicit read allowlist and gas estimation. The estimate captures the native transaction calldata and stops the SDK before any send. No signing key enters the adapter.

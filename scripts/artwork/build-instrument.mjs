@@ -132,13 +132,13 @@ writeFileSync(new URL('../../components/artwork/instrument-geometry.ts', import.
   `export const instrumentGeometry = ${JSON.stringify(geometry)} as const;\n`);
 
 const ramps = {
-  lo: { fill: '#3f303f', top: '#4f3a4d', line: '#a58a9c', shades: ['#29212c', '#342735', '#3d2e3d', '#493649'] },
-  mid: { fill: '#594451', top: '#705765', line: '#a58a9c', shades: ['#312632', '#3b2d39', '#493643', '#57414f'] },
-  hi: { fill: '#856675', top: '#a78392', line: '#d1b3c0', shades: ['#4b3645', '#5b4051', '#725164', '#896578'] },
-  paper: { fill: '#dac5c6', top: '#fae9e7', line: '#f5d9e0', shades: ['#88717e', '#9d8491', '#b79ca7', '#d2b5bf'] },
-  rose: { fill: '#bd809b', top: '#e0adc3', line: '#f3cadb', shades: ['#624052', '#7c5065', '#98627b', '#b37995'] },
+  lo: { fill: '#d6bfcc', top: '#e8d5de', line: '#98758a', shades: ['#aa889e', '#b795aa', '#c2a3b6', '#d0b6c5'] },
+  mid: { fill: '#dec5d1', top: '#f1dfe5', line: '#9b7589', shades: ['#b18b9f', '#bd9aaf', '#ccadbc', '#dcc1cd'] },
+  hi: { fill: '#e7cdd8', top: '#fff2f2', line: '#af8499', shades: ['#bf97aa', '#cda7b9', '#ddbdcb', '#ebd0db'] },
+  paper: { fill: '#f2e5df', top: '#fffaf3', line: '#b593a2', shades: ['#c2a6b1', '#d4bcc3', '#e4d0d3', '#f1e1de'] },
+  rose: { fill: '#c5789f', top: '#e9afc8', line: '#955373', shades: ['#a45b82', '#b76d93', '#ca86a8', '#dda0bb'] },
 };
-const palette = '.iso-line{fill:none;stroke:#9b7d91;stroke-width:.6;stroke-linecap:round;stroke-linejoin:round}.iso-crease{opacity:.3}.iso-bevel{opacity:.2}.iso-line[data-tone="faint"]{opacity:.25}.iso-line[data-tone="lo"]{opacity:.5}.iso-line[data-tone="hi"]{stroke:#f2d5e1}' +
+const palette = '.iso-line{fill:none;stroke:#98758a;stroke-width:.65;stroke-linecap:round;stroke-linejoin:round}.iso-crease{opacity:.3}.iso-bevel{opacity:.2}.iso-line[data-tone="faint"]{opacity:.25}.iso-line[data-tone="lo"]{opacity:.5}.iso-line[data-tone="hi"]{stroke:#fff8f3}' +
   Object.entries(ramps).map(([tone, ramp]) => {
     const selector = `.iso-solid[data-tone="${tone}"]`;
     return `${selector}>.iso-fill{fill:${ramp.fill}}${selector}>.iso-top{fill:${ramp.top}}` +
@@ -149,7 +149,7 @@ const scopedPalette = palette.replace(/(^|})([^{}]+){/g, (_, boundary, selectors
   boundary + selectors.split(',').map(selector => '.mi-drawing ' + selector.trim()).join(',') + '{');
 writeFileSync(new URL('../../components/artwork/instrument-palette.ts', import.meta.url), `export const instrumentPalette = ${JSON.stringify(scopedPalette)};\n`);
 const body = [...layers.back, ...layers.front].map(item => item.svg).join('');
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" class="mi-drawing" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="An explanatory two-owner connection instrument with separate decision pins and a locked release door"><desc>Illustration, not live activity. Public intent trays feed a permission inspection carriage. Two separate decision pins precede the locked release door. World verification remains paused.</desc><style>${scopedPalette}</style><ellipse cx="350" cy="318" rx="240" ry="55" fill="#0b080e" opacity=".3"/>${body}</svg>`;
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" class="mi-drawing" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="An explanatory two-owner connection instrument with separate decision pins and a locked release door"><desc>Illustration, not live activity. Public intent trays feed a permission inspection carriage. Two separate decision pins precede the locked release door. World verification remains paused.</desc><style>${scopedPalette}</style><ellipse cx="350" cy="318" rx="240" ry="55" fill="#c7aab8" opacity=".22"/>${body}</svg>`;
 writeFileSync(new URL('../../public/artwork/connection-instrument.svg', import.meta.url), svg);
 console.log(JSON.stringify({ size: 'Figure', parts: record.solids.length, viewport: [W, H], generatedRoot: root }));
 if (process.argv.includes('--audit')) {

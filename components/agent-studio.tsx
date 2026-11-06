@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Check, ExternalLink, Fingerprint, LockKeyhole, Pause, ShieldCheck, Sparkles } from 'lucide-react';
-import type { Action, Agent, Goal } from '@/packages/shared/src';
+import type { Action, Agent, Goal, Policy } from '@/packages/shared/src';
 import { Button, Checkline, Field, Tag, WalletPanel, api, short, submitTransaction, type Shared } from './workspace-features';
 import { DraftConflict } from './draft-conflict';
 
@@ -90,8 +90,10 @@ export function AgentStudio({ state, run, busy }: Shared) {
   }
 
   return <>
+    <section className="panel ens-guidance"><span className="section-note">Your identity, with a few clear boundaries</span><h2>Start with a name you control.</h2><p>You can sign in without owning an ENS name. Agent actions need a genuine Sepolia ENS agent identity, a separate delegate and current scoped permissions.</p><ol><li><strong>1. Bring an existing agent</strong>Import a configured identity you own. Meeti checks the owner, dedicated resolver, policy and delegation live.</li><li><strong>2. Or create a testnet identity</strong>Use the official Sepolia ENS app for a parent name. Free testnet names and test gas are separate from paid mainnet registration.</li><li><strong>3. Review each permission</strong>Only the approved fields, actions and expiry apply. Saving a form never grants onchain authority.</li></ol><a className="text-link" href="https://sepolia.app.ens.domains/" target="_blank" rel="noopener noreferrer">Open official Sepolia ENS app<ExternalLink size={14}/></a></section>
+    {!agent && <ExistingIdentity state={state} run={run} busy={busy}/>}
     <div className="editor-grid agent-layout">
-      <section className="panel form-panel">
+      <section className="panel form-panel"><details className="advanced-agent"><summary>{agent?'Edit agent configuration and permissions':'Configure a new ENS agent manually'}</summary>
         <div className="form-context"><span>Your representative</span><Tag>{draft ? 'Unsaved draft' : agent ? `Policy v${agent.policy.version}` : 'Not configured'}</Tag></div>
         {conflict && <DraftConflict name="agent settings" saved={saved} onUseSaved={() => { setDraft(null); setBase(null); setPrepared(null); }} onKeepDraft={() => setBase(fingerprint)} />}
         <form onSubmit={event => { event.preventDefault(); void run(save, 'Agent and policy saved. Verify live ENS authority before use.'); }}>
@@ -108,7 +110,7 @@ export function AgentStudio({ state, run, busy }: Shared) {
           <details><summary>ENS resolver and public policy reference</summary><p className="small-copy">These addresses connect your saved policy to its public permission source.</p><Field label="Resolver address"><input value={form.resolverAddress} onChange={event => update('resolverAddress', event.target.value)} placeholder="0x..." autoCapitalize="none" spellCheck={false} /></Field><Field label="Policy URI" hint="Optional HTTPS reference. Leave blank to embed approved permission classes in ENS."><input value={form.policyUri} onChange={event => update('policyUri', event.target.value)} placeholder="https://..." autoCapitalize="none" spellCheck={false} /></Field></details>
           <div className="form-actions">{draft && <Button kind="secondary" disabled={busy} onClick={() => { setDraft(null); setBase(null); setPrepared(null); }}>Discard draft</Button>}<Button type="submit" disabled={busy || conflict}>Save agent boundaries<Check size={16} /></Button></div>
           <p className="small-copy form-endnote">Changing saved permissions can require a matching ENS policy update. A saved application setting never grants chain authority.</p>
-        </form>
+        </form></details>
       </section>
 
       <aside className="stack">
@@ -117,7 +119,7 @@ export function AgentStudio({ state, run, busy }: Shared) {
       </aside>
     </div>
 
-    <section className="panel form-panel transaction-panel">
+    <section className="panel form-panel transaction-panel"><details className="advanced-agent"><summary>Advanced ENS transactions and receipt verification</summary>
       <div className="panel-title"><div><h2>Manage permission at its source.</h2><p className="small-copy">Actual ENSv2 wallet actions on Sepolia.</p></div><Tag>Wallet approval required</Tag></div>
       <p>Choose an action, inspect its exact transaction and approve it in your wallet. Network fees may apply.</p>
       {draft && <p className="draft-warning" role="status">Save or discard your agent draft before preparing a chain operation. The transaction must use the saved identity and policy.</p>}
@@ -133,9 +135,15 @@ export function AgentStudio({ state, run, busy }: Shared) {
         await api('agent/confirm', { operationId: prepared.operationId, hash });
         setPrepared(null);
       }, 'Transaction submitted for confirmation.')}>Approve in wallet and send<ExternalLink size={15} /></Button>{sendAttempted && <p className="small-copy form-endnote">A wallet request was made. If its result is uncertain, reconcile the existing transaction in Settings before preparing another.</p>}</div>}
-    </section>
+    </details></section>
     <WalletPanel state={state} run={run} busy={busy} />
   </>;
 }
 
 function ArrowIcon() { return <ExternalLink size={15} />; }
+
+type ExistingIdentityPreview={ensName:string;owner:string;delegate:string;policy:Policy;policyDigest:string;resolverAddress:string;checkedAt:string;blockNumber:string|number};
+function ExistingIdentity({state,run,busy}:Shared) {
+ const [ensName,setName]=useState('');const [delegate,setDelegate]=useState('');const [preview,setPreview]=useState<ExistingIdentityPreview|null>(null);const [approved,setApproved]=useState(false);
+ return <section className="panel form-panel existing-identity"><div className="panel-title"><div><h2>Use my existing agent identity</h2><p className="small-copy">Read and import the exact live policy. No registration or chain transaction.</p></div><Tag>Sepolia only</Tag></div><div className="two-fields"><Field label="Existing ENS agent name" hint="The configured agent subname owned by your signed-in wallet."><input value={ensName} onChange={event=>{setName(event.target.value);setPreview(null);setApproved(false);}} placeholder="agent.yourname.eth" autoCapitalize="none" spellCheck={false}/></Field><Field label="Existing delegated wallet" hint="A separate wallet that already has the scoped ENS permission."><input value={delegate} onChange={event=>{setDelegate(event.target.value);setPreview(null);setApproved(false);}} placeholder="0x..." autoCapitalize="none" spellCheck={false}/></Field></div><p className="small-copy">Your owner wallet: <code>{state.user.wallet}</code></p><Button kind="secondary" disabled={busy||!ensName.trim()||!delegate.trim()} onClick={()=>void run(async()=>{setPreview(null);setApproved(false);setPreview(await api<ExistingIdentityPreview>('agent/import/preview',{ensName:ensName.trim(),delegate:delegate.trim()}));})}><Fingerprint size={16}/>Check my existing identity</Button>{preview&&<div className="identity-import-review"><h3>Review the verified policy</h3><dl><dt>Agent</dt><dd>{preview.ensName}</dd><dt>Owner</dt><dd><code>{preview.owner}</code></dd><dt>Delegate</dt><dd><code>{preview.delegate}</code></dd><dt>Purpose</dt><dd>{preview.policy.purpose}</dd><dt>Policy version</dt><dd>{preview.policy.version}</dd><dt>Expires</dt><dd>{new Date(preview.policy.expiresAt).toLocaleString()}</dd><dt>Allowed actions</dt><dd>{preview.policy.allowedActions.join(', ')||'None'}</dd><dt>Allowed fields</dt><dd>{preview.policy.allowedFields.join(', ')||'None'}</dd><dt>Agent paused</dt><dd>{preview.policy.paused?'Yes':'No'}</dd><dt>Read at</dt><dd>{new Date(preview.checkedAt).toLocaleString()}</dd></dl><details><summary>Resolver and policy evidence</summary><p>Resolver <code>{preview.resolverAddress}</code></p><p>Policy digest <code>{preview.policyDigest}</code></p><p>Block <code>{String(preview.blockNumber)}</code></p></details><Checkline checked={approved} onChange={setApproved}>I reviewed this exact policy, scope and expiry and want to use this agent in Meeti.</Checkline><Button disabled={busy||!approved} onClick={()=>void run(()=>api('agent/import',{ensName:preview.ensName,delegate:preview.delegate,reviewedDigest:preview.policyDigest}),'Existing ENS identity imported after a fresh authority check.')}><Check size={16}/>Import reviewed ENS identity</Button></div>}</section>;
+}

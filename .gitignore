@@ -9,6 +9,7 @@ coverage/
 test-results/
 playwright-report/
 *.tsbuildinfo
+next-env.d.ts
 *.log
 artifacts/
 
@@ -24,6 +25,7 @@ Meeti_Logo.png
 
 # Tool caches, local exports and machine-specific editor state.
 .vercel/
+.superdesign/
 .vscode/
 .idea/
 .DS_Store

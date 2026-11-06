@@ -7,6 +7,7 @@ import type { Room } from '../shared/src';
 import { hasCurrentWorldVerification } from './world-store';
 import { requireWorldCapability, worldEnabled } from './capabilities';
 import { assessPair, freshPublicIntent } from './discovery';
+import type { RunningStage } from './agent-runs';
 
 export function ownedProposal(userId: string, id: string) {
   const p = requireValue(proposal(id), 'Introduction request was not found.', 404);
@@ -47,7 +48,7 @@ function latestConsents(p: NonNullable<ReturnType<typeof proposal>>) {
 export function requireBothConsents(p: NonNullable<ReturnType<typeof proposal>>) {
   if (latestConsents(p).some(c => c?.decision !== 'approve' || c.digest !== p.row.digest)) throw new HttpError(403, 'MUTUAL_CONSENT_REQUIRED', 'Both people must independently approve this introduction.');
 }
-export async function createProposal(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void) {
+export async function createProposal(userId: string, ownIntentId: string, candidateKey: string, checkSession: () => void, progress: (stage: RunningStage) => void = () => {}) {
   const own = requireValue(intent(ownIntentId), 'Choose an active networking intent.');
   if (own.userId !== userId) throw new HttpError(404, 'NOT_FOUND', 'Networking intent was not found.');
   assertIntent(own.value);
@@ -69,17 +70,21 @@ export async function createProposal(userId: string, ownIntentId: string, candid
   if (existing) return { id: existing.id };
   const service = ai();
   const input = { left: participant(userId, own.value), right: participant(other.userId, other.value), purpose: own.value.goal };
+  progress('evaluating_fit');
   const result = await service.evaluateCompatibility(input);
   if (result.output.assessment === 'not_aligned') { audit(userId, 'evaluate', 'not_aligned', 'The model found insufficient mutual fit.'); return { assessment: result.output, id: null }; }
+  progress('exchanging_context');
   const exchange = await service.negotiateIntroduction({ ...input, maxRounds: 1 });
+  progress('rechecking_permissions');
   await Promise.all([freshPublicIntent(userId, own.value, 'negotiate'), freshPublicIntent(other.userId, other.value, 'negotiate')]);
-  checkSession();
   const value = { leftIntent: own.value, rightIntent: other.value, leftPolicy: a.policy, rightPolicy: b.policy, leftProfileDigest, rightProfileDigest,
     leftAgent: a.id, rightAgent: b.id, summary: result.output.summary, compatibility: { ...result, semanticAssessment },
     exchanges: [ ...exchange.exchanges.map(x => ({ speaker: x.agentId === a.id ? a.ensName : b.ensName, content: x.message, allowed: true })),
       ...exchange.disclosureChecks.map(x => ({ speaker: 'Disclosure policy', content: `Requested field: ${x.fieldId}`, allowed: x.allowed, reason: x.reason })),
       { speaker: 'Disclosure policy', content: 'Private contact and employer fields are withheld.', allowed: false, reason: 'Human approval and protected release are required.' } ], createdAt: new Date().toISOString() };
   return atomic(() => {
+    checkSession();
+    progress('rechecking_permissions');
     const currentA = agent(userId), currentB = agent(other.userId);
     if (!currentA || !currentB || policyDigest(currentA.policy) !== policyDigest(a.policy) || policyDigest(currentB.policy) !== policyDigest(b.policy)) throw new HttpError(409, 'POLICY_CHANGED', 'Permissions changed during evaluation.');
     if (hash(JSON.stringify(profile(userId))) !== leftProfileDigest || hash(JSON.stringify(profile(other.userId))) !== rightProfileDigest) throw new HttpError(409, 'PROFILE_CHANGED', 'A profile changed during evaluation.');

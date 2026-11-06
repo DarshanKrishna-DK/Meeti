@@ -15,15 +15,18 @@ export type ProposalData = {
   createdAt: string;
 };
 export type ProposalRow = { id: string; left_user: string; right_user: string; pair_key: string; status: string; digest: string; data: string };
-const cache = globalThis as typeof globalThis & { meetiDb?: { path: string; db: DatabaseSync } };
+const schemaVersion = 3;
+const cache = globalThis as typeof globalThis & { meetiDb?: { path: string; db: DatabaseSync; schemaVersion?: number } };
 export function db(): DatabaseSync {
   const path = resolve(/* turbopackIgnore: true */ process.env.DATABASE_PATH || '.local-data/meeti.sqlite');
-  if (cache.meetiDb?.path === path) return cache.meetiDb.db;
+  if (cache.meetiDb?.path === path && cache.meetiDb.schemaVersion === schemaVersion) return cache.meetiDb.db;
   mkdirSync(dirname(path), { recursive: true });
-  const connection = new DatabaseSync(path);
+  const connection = cache.meetiDb?.path === path ? cache.meetiDb.db : new DatabaseSync(path);
   connection.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;');
   connection.exec(readFileSync(resolve('migrations/001_initial.sql'), 'utf8'));
-  cache.meetiDb = { path, db: connection };
+  connection.exec(readFileSync(resolve('migrations/002_onboarding.sql'), 'utf8'));
+  connection.exec(readFileSync(resolve('migrations/003_agent_runs.sql'), 'utf8'));
+  cache.meetiDb = { path, db: connection, schemaVersion };
   return connection;
 }
 export function atomic<T>(fn: () => T): T {

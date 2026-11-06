@@ -1,5 +1,7 @@
 # Integration friction and evidence limits
 
+Meeti: Good connections begin with a little intent.
+
 Observed on 2026-11-06:
 
 1. The documentation agent-skill page points to `arkiv-best-practices`, while the connected official MCP marks that skill deprecated and routes SDK 1.0.x work through `skills/arkiv/skill`. The adapter uses the version-pinned SDK 1.0.1 source and current MCP errata.

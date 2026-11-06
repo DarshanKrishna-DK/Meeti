@@ -28,10 +28,14 @@ export type Proposal = {
 };
 export type Room = { id: string; proposalId: string; title: string; introduction: string; createdAt: string };
 export type Audit = { id: string; action: string; outcome: string; detail: string; createdAt: string };
+export type AgentRun = { id: string; kind: 'proposal'; status: 'running' | 'completed' | 'failed' | 'interrupted';
+  stage: 'checking_permissions' | 'evaluating_fit' | 'exchanging_context' | 'rechecking_permissions' | 'completed' | 'failed' | 'interrupted';
+  startedAt: string; updatedAt: string; expiresAt: string; proposalId?: string };
 export type IntegrationStatus = { configured: boolean; status: 'ready' | 'unconfigured' | 'blocked' | 'deferred'; message: string };
+export type OnboardingState = { profileComplete: boolean; tourCompleted: boolean; hasAgent: boolean; hasIntent: boolean; hasPublishedIntent: boolean };
 export type AppState = {
   user: { id: string; email: string; wallet: string | null }; profile: Profile; agent: Agent | null;
-  intents: Intent[]; proposals: Proposal[]; rooms: Room[]; audit: Audit[];
+  intents: Intent[]; proposals: Proposal[]; rooms: Room[]; audit: Audit[]; agentRuns?: AgentRun[];
   integrations: Record<'ens' | 'arkiv' | 'ai' | 'world', IntegrationStatus>;
 };
 export type Candidate = { key: string; intentId: string; ensAgentRef: string; goal: Goal; summary: string; tags: string[]; expiresAt: string; owner: string; version: number; policyVersion: number; demoOrigin: boolean; match?: RankedCandidate };

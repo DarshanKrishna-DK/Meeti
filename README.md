@@ -65,9 +65,9 @@ Both people review the proposal. Private contact stays hidden until every requir
 <details>
 <summary><strong>See the current workspace</strong></summary>
 
-<img src="public/readme/workspace.png" width="100%" alt="The Meeti workspace with an actual ENSv2 test identity, two approved fictional Arkiv intents and the paused World release boundary" />
+<img src="public/readme/workspace.png" width="100%" alt="The creamy pink Meeti workspace with guided setup and an empty fictional test account" />
 
-This is the actual local interface using explicitly fictional test accounts and real testnet records. The permission timestamp is a historical observation. World is paused and no private room has opened.
+This is the current local interface captured with an isolated fictional test account. The empty state does not claim live discovery or verified identity. World is paused and no private room has opened.
 
 </details>
 
@@ -253,9 +253,20 @@ Invoke-RestMethod http://127.0.0.1:3173/api/health
 
 Keep the server terminal running. Stop it with Ctrl+C before switching between development and production or starting another server on port 3173. Configuration changes require a server restart. Do not run a production build over an active production server's .next directory.
 
-### 8. Create an account and complete the current setup
+### 8. Sign in with MetaMask and start your profile
 
-This checkpoint uses an account followed by explicit wallet ownership linking. Create an account in the local interface, save your private profile and choose public visibility separately. Unlock MetaMask yourself, select the intended wallet and approve only the displayed ownership message. Connecting a wallet alone does not register an ENS name or authorize a public transaction.
+1. Open http://127.0.0.1:3173 and select the main start button.
+2. Install or enable MetaMask in this browser, unlock it yourself and choose the account you want to use. On a phone, use the MetaMask browser.
+3. Select **Connect MetaMask**. Review the displayed account, network, expiry and exact one-time sign-in message.
+4. Select **Sign in with MetaMask** and confirm that message in the wallet. This verifies account ownership without a blockchain transaction, gas payment, ENS purchase or public profile publication. Reject a message if its domain or purpose is unexpected.
+5. On your first dashboard visit, read the guide or select **Skip tour**. Completion is saved to this account. You can replay it from the sidebar.
+6. Select **Continue guided setup**. Enter your name and optional introduction, what you seek, what you can offer and topics.
+7. Choose the individual profile fields that may become public. Private contact and employer are excluded. Nothing is published by this choice alone.
+8. Choose whether to permit approved context to be processed by the configured model provider, then save the private profile. AI consent is optional for saving a profile and required for the relevant model workflow.
+9. Continue to Agent Studio for the genuine ENS setup. Existing authorized agent identities can be reviewed and imported; a plain parent ENS name alone does not establish delegated agent authority.
+10. After ENS authorization is ready, use **Your intents** to review the interpretation, public projection and expiry. A separate wallet approval is required for its actual Arkiv publication.
+
+There is no Google authentication or password form in the product interface. Returning users sign in with the same wallet and recover their own persisted account. Connecting another wallet does not switch an already authenticated account automatically: sign out and sign in deliberately.
 
 Use a real Sepolia ENSv2 parent name and the dedicated agent namespace/resolver setup for protected discovery. The independent CLI can inspect a registration quote without signing:
 
@@ -265,7 +276,25 @@ node --env-file=.env.local --import tsx packages/ens/register-parent.ts quote yo
 
 Replace both arguments with your own values. This only reads a quote. Registration, resolver/delegation changes and Arkiv publication require separately reviewed wallet transactions. Follow the [official ENSv2 Sepolia tutorial](https://docs.ens.domains/ensv2/tutorial-app-developers/) for current deployment details. Missing names or funding must remain visible blockers, rather than decorative identities.
 
-The upcoming guided MetaMask-first onboarding is not claimed by this checkpoint. The README will be updated again when that flow is implemented and verified.
+#### Reuse an existing agent identity
+
+In Agent Studio, find **Use my existing agent identity**, enter the complete agent name (for example, agent.yourname.eth) and its separate delegate address. Preview the current public policy, network, owner, permitted actions and expiry. Confirm import only after reviewing those values. Meeti re-reads ENS before saving the exact current policy version. Revoked, expired, changed, unowned or unsupported identities are denied. Import does not restore private profile data or write a chain transaction.
+
+#### Do new users need to pay for ENS?
+
+A name is not needed to sign in or save a private profile. Agent discovery and publication need genuine ENSv2 authorization. The current demo uses Sepolia, where registration uses freely minted mock test USDC and test ETH for gas. Mainnet names involve real registration, renewal and network fees. An existing mainnet name does not automatically establish ownership of the same Sepolia name. Use the official tutorial linked above for registration and inspect every transaction.
+
+#### Start a fresh local onboarding review
+
+Stop the Meeti server with Ctrl+C, then run:
+
+~~~powershell
+npm run onboarding:fresh
+npm run db:migrate
+npm run dev
+~~~
+
+The reset command selects a new empty database in .local-data and writes a local restore manifest. Previous encrypted databases, chain receipts and DATA_ENCRYPTION_KEY are preserved. Old session cookies do not authenticate against the fresh dataset. Sign in with MetaMask to see the new-user flow. To return to the earlier demo, stop the server, restore the previous DATABASE_PATH from the manifest in .env.local, then restart without changing the encryption key. This is a local dataset switch, not deletion of public ENS or Arkiv records. Existing Arkiv publications remain public, but their old private inbox records are not recreated in the fresh dataset. Restore the previous database to replay that prior demo, or complete onboarding and approve new publications for both fresh test accounts.
 
 ### Troubleshooting local startup
 
@@ -284,17 +313,17 @@ The upcoming guided MetaMask-first onboarding is not claimed by this checkpoint.
 
 ### Separate sessions matter
 
-Normal windows and tabs in one browser profile share cookies. Use **two browser profiles**, **a normal and private session**, or **separate devices**. Sign in to different accounts with distinct linked wallets. Do not copy one session cookie into both participants' contexts.
+Normal windows and tabs in one browser profile share cookies. Use **two browser profiles**, **a normal and private session**, or **separate devices**. Sign in with distinct MetaMask wallets for the two participants. Do not copy one session cookie into both participants' contexts.
 
 The same person can use their account on mobile and laptop through one shared backend. Saved state refreshes when returning to the page and while it is visible. Unsaved form drafts stay local. Refresh never signs, publishes, approves or starts agent reasoning automatically. Profile changes intentionally invalidate proposals bound to the earlier profile snapshot, so finish your demo profile before requesting an introduction.
 
 ### A dynamic demonstration
 
-1. **Profile:** save different headlines for both accounts. Reload to show persistence and account isolation. Keep contact and employer private.
+1. **Onboarding and profile:** sign in with each wallet, complete or skip the first-time tour and save different headlines for both accounts. Reload to show persistence and account isolation. Keep contact and employer private.
 2. **Agent studio:** inspect each actual ENSv2 identity and current narrow authorization.
 3. **Intent:** use a fictional DevRel job seeker and a differently worded developer-advocacy recruiter. Review direction, public fields and expiry. Publish only after a deliberate wallet decision with test funding.
 4. **Discover:** retrieve actual Arkiv records. Enable labelled demo records for the existing fictional accounts. Show entity IDs, record versions, bounded coverage and relevance. Another job seeker must not become a hiring match because the words are similar.
-5. **Agent exchange:** request a proposal and show the actual dialogue and cited evidence. Allow several minutes for permission checks and reasoning. The previous complete API acceptance run took about four minutes.
+5. **Agent exchange:** request a proposal and show the actual dialogue and cited evidence. Activity records current request stages, completion, failure or interruption. A second tab signed in to the same account can observe progress through the shared backend; unfinished message contents remain withheld until final checks finish. Allow several minutes for permission checks and reasoning. The previous complete API acceptance run took about four minutes.
 6. **Approvals:** review independently in both sessions. Observe saved decisions across sessions. Contact stays private. While World is paused, both approvals still cannot open a protected room.
 7. **Revocation:** after a fresh owner-approved testnet action, show genuine ENS denial on the next protected request. Restore only through a reviewed owner action. Never replay an old transaction.
 
@@ -304,7 +333,12 @@ The three existing live fictional records have an approved twenty-four-hour life
 
 ### What to test before presenting
 
-- Visit landing, sign-in/onboarding, dashboard, profile, agent studio, intents, discovery, exchange, approvals, introductions, verifier and settings.
+- Visit every landing section and all four interactive explanation stages. Then test MetaMask sign-in, onboarding, dashboard, profile, agent studio, intents, discovery, activity, approvals, introductions, verifier and settings.
+- Reject a wallet message, change the selected account before signing and allow a challenge to expire. Each case must recover without signing a transaction.
+- Complete or skip the first-time tour, reload, replay it and confirm another account has its own preference. Collapse and expand desktop navigation; open and close mobile navigation.
+- Save the guided private profile, reload and inspect its visibility choices. A rejected or failed save must retain the editable draft.
+- Preview an existing ENS identity and check its owner, delegate, exact policy and expiry before import. Do not treat an old authority badge as a fresh permission check.
+- Inspect actual agent activity, dialogue and public lead details. No automatic background search is claimed while the agent is idle.
 - Check phone navigation, 320px and 390px layouts, keyboard focus, long identifiers, reduced motion and the SVG fallback without WebGL.
 - Test no candidates, incompatible directions, self-match rejection, missing mandatory facts, denied permissions and unavailable providers.
 - Confirm that private profiles, audit, exports and proposal membership do not leak between accounts.
@@ -316,7 +350,7 @@ The three existing live fictional records have an approved twenty-four-hour life
 
 | Area | Evidence and remaining boundary |
 |---|---|
-| Authentication and private profiles | Actual HTTP persistence and isolated session checks; encrypted at rest |
+| Authentication and private profiles | Real EIP-4361 wallet signatures, browser-bound nonce/replay checks, persisted tour and guided profile setup; encrypted at rest |
 | ENSv2 | Two actual Sepolia namespaces, reciprocal narrow writes, forbidden-operation reverts, revocation, genuine API denial and restoration verified |
 | Arkiv | Three approved fictional Rabdi publications, successful receipts, signed owner/creator association and actual SDK readbacks |
 | Semantic discovery | Real Nomic calls; positive paraphrase without exact tag overlap; incompatible seeker excluded; cold-cache rebuild verified |
@@ -335,7 +369,7 @@ The three existing live fictional records have an approved twenty-four-hour life
 - Public data can be copied. Expiry and revocation cannot erase previous downloads.
 - Provider, quota and malformed-output failures are visible. There is no fabricated or silent lexical fallback.
 - SQLite currently supports one persistent backend. Account recovery, verified email, wallet rotation and horizontal deployment remain production work.
-- No outreach, calendar bookings or contact messages are sent. Synthetic records remain explicitly fictional.
+- Current wallet sign-in supports Ethereum externally owned accounts. Smart contract wallet authentication is not implemented. No outreach, calendar bookings or contact messages are sent. Synthetic records remain explicitly fictional.
 - Finite English evaluations do not establish multilingual quality, credentials or guaranteed accuracy.
 
 </details>
@@ -348,6 +382,8 @@ Choose a reviewed architecture after local acceptance:
 
 - **Vercel frontend with persistent HTTPS backend:** retain SQLite on a durable host and provide a same-origin API proxy plus reachable embedding service. Proxy and hosting configuration still need implementation and verification.
 - **Vercel with managed persistence:** migrate the database adapter and transactions, then configure a reachable embedding provider with explicit model, revision, dimensions, quotas and approved cost. This migration is not currently implemented.
+
+The owner approved a dedicated Meeti Supabase project in the Merci organization at $0/month with no paid upgrades. Creation was refused because the account has reached its two active free-project limit. No existing project was changed. Supabase is not connected to the application, and the persistence migration is not claimed complete.
 
 Prepare Vercel project access, the chosen backend/database host, and the server-side variables listed above. A GitHub-connected dashboard deployment does not require sharing a Vercel token with the app. CLI automation may use a separately scoped VERCEL_TOKEN; it is not a frontend runtime credential. Tokens alone do not solve persistent storage.
 
@@ -375,9 +411,9 @@ npm run demo:doctor
 
 Run npm run demo:doctor -- --target=vercel to see the current deployment blockers. This read-only check does not perform model inference, wallet signing, chain writes or World requests.
 
-Browser tests use an isolated database and port 3198. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to an installed Chromium executable if needed. Fixture checks do not establish live sponsor success. Real-provider drivers remain separate and do not authorize extra public writes.
+Browser tests run the optimized production build with an isolated database and port 3198. Run npm run build before npm run test:e2e. Stop any server using the same build before rebuilding. Browser tests do not use the development hot-reload server. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to an installed Chromium executable if needed. Fixture checks do not establish live sponsor success. Real-provider drivers remain separate and do not authorize extra public writes.
 
-Latest local validation on 6 November 2026: **333 fixture tests and 20 browser cases passed**, together with lint, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, separate sessions, delayed-response races, draft conflicts, time zones, WebGL and fallback. Physical-phone and eventual deployed-origin checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
+Latest local validation on 6 November 2026: **379 unit/integration tests across nineteen files and all 24 optimized-production browser cases passed**, together with lint, type generation, typecheck and the production build. Browser checks cover forty authenticated route/viewport combinations, generated-EOA signed wallet login, replay denial, independent owners, guided profile privacy, persisted tour, session races, draft conflicts, time zones, navigation, WebGL and SVG fallback. The controlled browser wallet signs real cryptographic challenges; this does not establish testing of the installed MetaMask extension. Physical-phone, deployed-origin and fresh live chain-writing checks remain separate. These results are local evidence, not a continuously running GitHub CI badge.
 
 <details>
 <summary><strong>Project map and repository hygiene</strong></summary>
@@ -418,7 +454,7 @@ Private docs, internal logs, local agent setup, credentials, databases, journals
 
 **Meeti**
 
-A little more intention. A better first introduction.
+Good connections begin with a little intent.
 
 Next.js · TypeScript · ENSv2 · Arkiv · Human decisions
 

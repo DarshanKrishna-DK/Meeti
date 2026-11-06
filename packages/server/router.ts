@@ -17,6 +17,10 @@ import { worldEnabled } from './capabilities';
 import { discoverCandidates, clearEmbeddingCache } from './discovery';
 import { MatchingError } from '../matching/src/embeddings';
 import { assertIntentEvidence, interpretIntent } from '../matching/src/semantics';
+import { handleWalletAuth } from './wallet-auth';
+import { handleOnboarding } from './onboarding';
+import { handleAgentImport } from './agent-import';
+import { agentRuns, withAgentRun } from './agent-runs';
 
 function ok(data: unknown, cookie?: string): Response {
   return Response.json({ data }, { headers: { 'Cache-Control': 'no-store', ...(cookie ? { 'Set-Cookie': cookie } : {}) } });
@@ -38,8 +42,8 @@ function diagnostics() {
 }
 function state(actor: UserRow) {
   const roomRows = db().prepare('SELECT rooms.* FROM rooms JOIN proposals ON proposals.id=rooms.proposal_id WHERE proposals.left_user=? OR proposals.right_user=?').all(actor.id, actor.id) as { id: string; data: string }[];
-  return { user: { id: actor.id, email: actor.email, wallet: actor.wallet }, profile: profile(actor.id), agent: agent(actor.id), intents: listIntents(actor.id),
-    proposals: proposalDtos(actor.id), rooms: roomRows.map(row => { const r = decrypt<Room>(row.data, `room:${row.id}`); return { ...r, introduction: '' }; }),
+  return { user: { id: actor.id, email: actor.email.endsWith('@wallet.meeti.invalid') ? '' : actor.email, wallet: actor.wallet }, profile: profile(actor.id), agent: agent(actor.id), intents: listIntents(actor.id),
+    proposals: proposalDtos(actor.id), agentRuns: agentRuns(actor.id), rooms: roomRows.map(row => { const r = decrypt<Room>(row.data, `room:${row.id}`); return { ...r, introduction: '' }; }),
     audit: (db().prepare('SELECT * FROM audit WHERE user_id=? ORDER BY rowid DESC LIMIT 100').all(actor.id) as { id: string; action: string; outcome: string; detail: string; created_at: string }[])
       .map(x => ({ id: x.id, action: x.action, outcome: x.outcome, detail: x.detail, createdAt: x.created_at })), integrations: diagnostics() };
 }
@@ -63,6 +67,8 @@ export async function route(request: Request, path: string[]): Promise<Response>
     const key = path.join('/');
     if (request.method === 'GET') {
       if (key === 'health') return ok({ status: 'ok', storage: 'sqlite', integrations: diagnostics() });
+      const onboarding = handleOnboarding(request, key);
+      if (onboarding) return onboarding;
       const actor = requireUser(request);
       if (key === 'state') return ok(state(actor));
       if (key === 'operations') {
@@ -85,6 +91,10 @@ export async function route(request: Request, path: string[]): Promise<Response>
     if (request.method !== 'POST') throw new HttpError(405, 'METHOD_NOT_ALLOWED', 'This request method is not supported.');
     checkOrigin(request);
     const body = await readBody(request);
+    const walletAuth = await handleWalletAuth(request, key, body);
+    if (walletAuth) return walletAuth;
+    const onboarding = handleOnboarding(request, key, body);
+    if (onboarding) return onboarding;
     if (key === 'auth/register' || key === 'auth/login') {
       const input = z.object({ email: z.string().trim().email().max(254).transform(x => x.toLowerCase()), password: z.string().min(12).max(128) }).strict().parse(body);
       rateLimit('auth:global', 60); rateLimit('auth:' + hash(input.email), 10);
@@ -110,6 +120,8 @@ export async function route(request: Request, path: string[]): Promise<Response>
     }
     const actor = requireUser(request);
     rateLimit(`api:${actor.id}`, 120);
+    const importedAgent = await handleAgentImport(request, key, body);
+    if (importedAgent) return importedAgent;
     if (key === 'auth/logout') {
       const token = request.headers.get('cookie')?.split(';').map(x => x.trim()).find(x => x.startsWith('meeti_session='))?.slice(14);
       if (token) db().prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(token));
@@ -300,7 +312,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
     if (key === 'proposals') {
       const input = z.object({ intentId: z.string().uuid(), candidateKey: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).strict().parse(body);
       rateLimit('evaluate:' + actor.id, 4, 3600000);
-      return ok(await createProposal(actor.id, input.intentId, input.candidateKey, () => { requireUser(request); }));
+      return ok(await withAgentRun(actor.id, progress => createProposal(actor.id, input.intentId, input.candidateKey, () => { requireUser(request); }, progress)));
     }
     if (path[0] === 'proposals' && path.length === 3) {
       const id = z.string().uuid().parse(path[1]);

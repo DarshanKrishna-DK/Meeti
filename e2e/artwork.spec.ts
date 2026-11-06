@@ -16,16 +16,39 @@ test('explains permission stages with keyboard controls without invoking applica
   const figure = page.getByRole('figure', { name: 'How a permissioned introduction works' });
   await expect(figure).toBeVisible();
   await expect(figure.locator('[data-artwork-ready]')).toHaveAttribute('data-artwork-ready', 'true');
-  const controls = figure.getByRole('group', { name: 'Explore the introduction explanation' });
-  await controls.getByRole('button', { name: 'Discover', exact: true }).focus();
+  const controls = figure.getByRole('tablist', { name: 'Explore four introduction steps' });
+  await expect(controls.getByRole('tab')).toHaveCount(4);
+  await controls.getByRole('tab', { name: /Share an intent/ }).focus();
+  const observed: string[] = [];
+  const positions: string[] = [];
+  for (let index = 0; index < 4; index += 1) {
+    await controls.getByRole('tab').nth(index).click();
+    await expect(figure).toHaveAttribute('data-explanation-stage', String(index));
+    await expect(controls.getByRole('tab').nth(index)).toHaveAttribute('aria-selected', 'true');
+    await expect(figure.getByRole('tabpanel')).toBeVisible();
+    // Reduced motion should settle directly to four distinct mechanical positions.
+    await expect.poll(async () => figure.locator('[data-part-group="carriage"]').first().getAttribute('transform')).not.toBeNull();
+    if (index > 0) await expect.poll(async () => figure.locator('[data-part-group="carriage"]').first().getAttribute('transform')).not.toBe(positions[index - 1]);
+    positions.push((await figure.locator('[data-part-group="carriage"]').first().getAttribute('transform'))!);
+    if (index === 2) {
+      await expect(figure.locator('[data-part-group="decision-67"]').first()).toHaveAttribute('transform', 'translate(0 4.2)');
+      await expect(figure.locator('[data-part-group="decision-88"]').first()).toHaveAttribute('transform', 'translate(0 4.2)');
+    }
+    observed.push(await figure.getByRole('tabpanel').innerText());
+  }
+  expect(new Set(observed).size).toBe(4);
+  expect(new Set(positions).size).toBe(4);
+  await controls.getByRole('tab', { name: /Share an intent/ }).focus();
+  await page.keyboard.press('Home');
   await page.keyboard.press('ArrowRight');
-  await expect(controls.getByRole('button', { name: 'Permissions', exact: true })).toBeFocused();
-  await expect(controls.getByRole('button', { name: 'Permissions', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(controls.getByRole('tab', { name: /Set boundaries/ })).toBeFocused();
+  await expect(controls.getByRole('tab', { name: /Set boundaries/ })).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('End');
   await expect(figure).toHaveAttribute('data-explanation-stage', '3');
-  await expect(figure.getByText('The last gate stays closed.', { exact: true })).toBeVisible();
+  await expect(figure.getByText('The final door stays locked.', { exact: true })).toBeVisible();
   await expect(figure.getByText('Illustration, not live activity.', { exact: true })).toBeVisible();
-  await expect(figure.getByText('World verification is paused.', { exact: false })).toBeVisible();
+  await expect(figure.getByText('Locked: World verification paused', { exact: true })).toBeVisible();
+  await expect(figure.locator('[data-part-group="shutter"]').first()).toHaveAttribute('transform', 'translate(0 0)');
   await page.keyboard.press('Home');
   await expect(figure).toHaveAttribute('data-explanation-stage', '0');
   expect(mutations).toEqual([]);
@@ -45,14 +68,12 @@ test('retains the complete SVG explanation when WebGL is unavailable', async ({ 
   const figure = page.getByRole('figure', { name: 'How a permissioned introduction works' });
   await expect(figure.locator('[data-artwork-ready]')).toHaveAttribute('data-webgl', 'fallback');
   await expect(figure.getByRole('img')).toBeVisible();
-  await figure.getByRole('button', { name: 'Both decide', exact: true }).click();
-  await expect(figure.getByText('One decision belongs to each person.', { exact: true })).toBeVisible();
+  await figure.getByRole('tab', { name: /Both decide/ }).click();
+  await expect(figure.getByText('Two people. Two separate decisions.', { exact: true })).toBeVisible();
   expect(await figure.locator('svg path').count()).toBeGreaterThan(40);
   const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: innerWidth }));
   expect(widths.document).toBeLessThanOrEqual(widths.viewport + 1);
   mkdirSync(screenshotDirectory, { recursive: true });
-  await page.locator('#privacy img').scrollIntoViewIfNeeded();
-  await page.locator('#privacy img').evaluate(image => (image as HTMLImageElement).decode());
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   await page.screenshot({ path: resolve(screenshotDirectory, 'landing-webgl-fallback-390.png'), fullPage: true, animations: 'disabled' });
 });
@@ -76,7 +97,7 @@ test('uses a genuine available WebGL context and preserves the SVG explanation a
   const stage = figure.locator('[data-artwork-ready]');
   await expect(stage).toHaveAttribute('data-artwork-ready', 'true');
   await expect(stage).toHaveAttribute('data-webgl', 'active');
-  await figure.getByRole('button', { name: 'Permissions', exact: true }).click();
+  await figure.getByRole('tab', { name: /Set boundaries/ }).click();
   await expect(figure).toHaveAttribute('data-explanation-stage', '1');
   mkdirSync(screenshotDirectory, { recursive: true });
   await figure.screenshot({ path: resolve(screenshotDirectory, 'instrument-live-webgl-desktop.png'), animations: 'disabled' });
@@ -94,8 +115,8 @@ test('uses a genuine available WebGL context and preserves the SVG explanation a
   }
   await expect(stage).toHaveAttribute('data-webgl', 'fallback');
   await expect(figure.getByRole('img')).toBeVisible();
-  await figure.getByRole('button', { name: 'Release locked', exact: true }).click();
-  await expect(figure.getByText('The last gate stays closed.', { exact: true })).toBeVisible();
+  await figure.getByRole('tab', { name: /Protected intro/ }).click();
+  await expect(figure.getByText('The final door stays locked.', { exact: true })).toBeVisible();
   await expect(figure.getByText('Illustration, not live activity.', { exact: true })).toBeVisible();
   await figure.screenshot({ path: resolve(screenshotDirectory, 'instrument-context-loss-fallback-desktop.png'), animations: 'disabled' });
 });
