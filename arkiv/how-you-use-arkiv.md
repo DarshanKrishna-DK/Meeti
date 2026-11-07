@@ -1,59 +1,71 @@
-# How the application uses Arkiv
+﻿# How I use Arkiv in Meeti
 
 Meeti: Good connections begin with a little intent.
 
-Arkiv is the authoritative shared index of active, explicitly public networking intents. The Discover UI must call the server adapter. The server uses its private `ARKIV_ACCESS_KEY` to query Rabdi. There is no database, fixture, or seeded fallback for public discovery.
+I use Arkiv as the authoritative source of active public networking intentions. My application uses `@arkiv-network/sdk` 1.0.1 on Rabdi, chain 7794095. The runtime integration is in `packages/arkiv/src/index.ts`; MCP documentation access is separate from those application reads and writes.
 
-Publishing starts with a reviewed public preview. The owner signs `intentSigningMessage(intent)` with the connected wallet. The server verifies that exact projection, current ENS authority, and session ownership before preparing a transaction. The Arkiv adapter uses the documented SDK through an unsigned transport that refuses every RPC method except an explicit read allowlist and gas estimation. The estimate captures the native transaction calldata and stops the SDK before any send. No signing key enters the adapter.
+## What I store and filter
 
-Preparation verifies Rabdi, estimates at `latest`, sets gas to `max(1,000,000, 2 × estimate)`, enforces half the latest block gas limit, reads current gas price and nonce, rejects pending nonce differences, and checks fee budget and balance. The returned EIP-1193 request contains only public transaction fields. It expires after at most 60 seconds. The connected wallet must review and confirm it separately. The adapter never broadcasts, creates accounts, funds wallets, switches signers, or retries a write.
+My named schema is `meeti.public_intent.v2`. I store an approved public summary and structured semantics, plus an owner reference, ENS agent reference, stable logical intent ID and revision. The indexed columns include:
 
-After a user submits, the backend verifies a successful receipt, native transaction destination, exact entity creation event, creation block, live entity, signed payload, protected owner and creator, and preview digest. A missing or uncertain result remains unverified. Reconcile the existing hash before any further signature.
+- `intentId`, `owner`, `version` and `schemaVersion` for identity and revision lookup.
+- `direction`, `category`, `goal` and `canonicalRole` for broad candidate retrieval.
+- `tag0` through `tag7` for bounded topic filters.
+- `visibility`, `optIn`, `status`, `demoOrigin` and `expiresAt` for eligibility and scope.
 
-Discovery uses schema `meeti.public_intent.v2` and indexed complementary direction, category, optional topic slots, public visibility, opt-in, demo provenance and application expiration. The adapter supports up to five pages of 100 entities by ascending key. The backend interleaves topic and broad category queries, beginning with the broad scan, and assesses at most twelve candidates with explicit bounded-coverage reporting. All pages are observations of current state, not an atomic historical snapshot. The response reports observed blocks, truncation, and rejected entity count. Invalid filters and provider failures are errors. A successful empty query is an honest empty result.
+The larger signed public payload stays in a bytes column. I verify that its fields agree with the indexed values. A copied schema tag or an application-level owner field is not enough: I also verify the owner signature and Arkiv's protected owner and creator association.
 
-Candidates are verified before blocked-owner, self, topic, and demo filters are rechecked locally. The highest observed version of each owner and intent is retained; conflicting payloads at the same version fail closed. Before returning a candidate, another current query reads the two highest chain-present versions for that owner and intent without goal, topic, demo, or application-time filters. A newer changed or expired version suppresses the older candidate. Any tie at the selected version is ambiguous and rejected, even if the payloads agree. Deleted or chain-expired versions cannot be recovered from current-state queries, so the application must retain its own version high-water mark. A protected action must revalidate the selected entity, current version, and ENS policy and must not infer freshness from a cached candidate.
+I store tags and structured intent data in Arkiv. I do not store vectors there. Semantic comparison uses actual backend embeddings, with a bounded, rebuildable in-memory cache. In the verified hosted DevRel run, the model was `Xenova/all-MiniLM-L6-v2`, with 384 dimensions. This is hybrid retrieval using Arkiv records, not Arkiv-native vector search.
 
-The Arkiv package does not schedule discovery. The server now owns durable discovery jobs in `packages/server/discovery-jobs.ts`; run `npm run worker:discovery` alongside the persistent backend. Opted-in active intents are due every minute, with bounded work, overlap leases, failure backoff and version-bound results. Publication confirmation and material edits queue work immediately; the running worker picks it up on its next tick. Manual Search now uses the same actual discovery path. A Vercel frontend alone does not run this worker. Public publication still requires its separate reviewed preview and bounded owner signature authorization; a discovery schedule cannot renew an old approval.
+## Publication and editing
 
-Run a real public query after configuring a local server key:
+The user reviews the public fields and expiry before signing the exact intent projection. My backend checks the authenticated owner and current ENS authority, then prepares a bounded unsigned Arkiv transaction. The wallet separately approves the chain write.
 
-```powershell
-node --env-file-if-exists=.env.local --import tsx arkiv/query.ts collaborator typescript
-```
+I mark publication confirmed only after checking a successful receipt and reading the real entity back. An unsigned preparation, pending transaction or failed RPC request does not become a published intent in the interface.
 
-Set `ARKIV_INCLUDE_DEMO=1` locally only when intentionally querying labeled fictional public profiles. Output contains real returned public entities and observation metadata. It does not claim any external publication has occurred.
+My application accepts edits only from the authenticated intent owner. An edit creates a new reviewed revision, followed by a separate public write. I use signed revisions and current-version checks instead of treating old public records as automatically current. Closing an intent stops local matching immediately; the public closure revision still needs its own confirmed write. Public historical records may remain visible.
 
-Focused tests:
+## Expiry and discovery
 
-```powershell
-npx vitest run packages/arkiv/src/index.test.ts
-```
+The user chooses a UTC deadline, and I pass the expiry through the SDK's `ExpirationTime.atDate`. The reader checks the public deadline and the chain lifetime. Demo records were created with 24-hour validity. A renewal requires a later expiry and a new owner-approved revision.
 
-Official tooling was read through the available Arkiv General MCP and the [AI Tools Hub](https://hub.arkiv.network/ai-tools). The [agent skill page](https://docs.arkiv.network/start-here/agent-skill/) links a deprecated best-practices entrypoint; the canonical MCP router currently points to `skills/arkiv/skill` and SDK 1.0.1. The official SDK source and MCP errata were consulted before implementation. Retrieval is separate from project MCP installation and application proof.
+My broad queries filter active, opted-in, public records by compatible direction and category. Optional tags can refine retrieval, but I do not require all tags to overlap. Two job seekers are excluded as a hiring pair even if their summaries are nearly identical.
 
-## Confirmed fictional demo records
+The adapter permits up to five pages of 100 entities. The matching backend evaluates a bounded candidate set, currently capped at twelve, and reports coverage rather than claiming exhaustive search. It rechecks relevant Arkiv state and ENS authority before protected actions. Expired, superseded, unauthorized or ambiguous records cannot become an introduction just because an embedding is similar.
 
-On 6 November 2026, two separate generated test owners published these four approved intents on Rabdi, chain 7794095. Each passed canonical receipt verification, application confirmation and SDK payload read-back. The official Arkiv MCP `verify_entity` separately observed all four owners and creation/expiry block metadata at block 303325. That MCP observation does not establish application correctness or prize eligibility.
-
-The workshop recruiter subsequently published approved revision 2 for the same logical intent `635da455-bab3-41b6-97cf-d43fa9a95ad0`: [transaction](https://rabdi.explorer.arkiv.network/tx/0xe2a7208e626d304e353ceabe9a2db973b0e515c15226593e182f3e131de9fb99), entity `0x4485da1e5050e5d547e72c516c04e2ef9daebd9da386ca2c8e36f8974baebf8b`, block 306425. The exact correction changes an incorrectly extracted mandatory condition to preferred, preserving the public text and expiry. Historical revision 1 remains visible on-chain but is not the current application revision. Fresh queries selected revision 2 in both directions; actual Nomic embeddings produced cosine 0.8501236543818352 despite no exact tag overlap. Both results are possible matches with unresolved preferences, not consent. One local embedding request processed 33 tokens; the reverse query reused two cached vectors after fresh Arkiv and ENS checks. Coverage was bounded at twelve candidates and was not exhaustive.
-
-| Intent | Entity key | Transaction |
-| --- | --- | --- |
-| DevRel job seeker | `0x814a8b6a7cda9fce6da3f65d5764d461aa2b3d8bdf7d67befb20efbdce9647aa` | `0x638379d3c25c6394851276206bb3416eecc9cf2c21117543f05612e9eae2b961` |
-| Developer advocacy recruiter | `0x85779269b4d42adb1b1ee0b73f960389f3ebc08b8ce3ee14c87914ab8869aed0` | `0x95166406dcbb1c148c1e4ab2f3016851c571890e172d2e66949edabe4145a42b` |
-| Workshop writing collaborator | `0xae1d9e9779a65765d664ab9ff4c7a7b38832f1c26c855cbfcb0eb9c4f4a6a424` | `0x9656bd1b997796f5c6d4a2abbd5f278932a2f00725b6a223682b34782a3ee949` |
-| Workshop live-coding collaborator | `0x01071f4930ce4d80f1c9e656b97c26014e4fab81e813d01c15b1c929c259a9a8` | `0x7749bc2bb7d7501389dcfe0f65b18ebff074e0c7dac6ac68f02d79e2a466d8cc` |
-
-These records expire 24 hours after their respective draft creation on 6 November. A later empty query is not evidence that they never existed. Reproduction requires currently active, separately approved test records after expiry. To query the existing public fictional records while active:
+For a configured local application, this command reads real public fictional test records while they remain active:
 
 ```powershell
 $env:ARKIV_INCLUDE_DEMO='1'
 npm run arkiv:query -- collaborator
 ```
 
-Actual application discovery found the DevRel seek/hire pair in both directions despite zero exact tag overlap. Local `nomic-embed-text:v1.5` produced 768-dimensional vectors and cosine 0.8924824531220792. The first comparison used one real 52-token embedding request; the reciprocal comparison reused two cached vectors after fresh Arkiv and ENS checks. This is semantic relevance, not a compatibility probability or introduction consent. Unconfirmed soft preferences remained visible. Candidate coverage was explicitly non-exhaustive, capped at twelve. All accounts are fictional and are not World verified.
+The server-side access key belongs in local environment configuration, never in the command output or browser bundle. After the demo records expire, an empty result is expected unless new records are separately approved and published.
 
-### Free CPU deployment model verification
+## What these features change for my users
 
-On 7 November, the production build in Vercel mode used the migrated Supabase accounts and queried actual Rabdi blocks 311769 and 311798. Both DevRel directions returned their separately owned records after live ENS checks. The pinned `Xenova/all-MiniLM-L6-v2` CPU model produced 384-dimensional vectors and cosine `0.6872726960500519`. One real embedding batch processed 46 tokens at no provider charge; the reciprocal result reused the two vectors while re-reading current chain state. Both recommendations remained `possible-match` with unresolved preferences. Coverage was capped at twelve; other candidates with failed authority checks were reported unconfirmed. This was an actual local production-server pipeline, not yet a hosted-origin acceptance claim. It used the same existing public entities and made no new blockchain publication.
+| Arkiv feature | What a user sees |
+| --- | --- |
+| Confirmed publication and read-back | A real published state and an inspectable transaction, rather than optimistic success |
+| Indexed direction and category | Candidates with a complementary purpose, rather than every similar-looking profile |
+| Public topic and intent data | Semantic ranking grounded in actual retrieved records |
+| Ownership and signature checks | Another wallet cannot impersonate a trusted intent simply by copying its tag |
+| Revisions and freshness checks | Edited or closed intentions stop qualifying as old recommendations |
+| Entity lifetime and public expiry | Time-limited discovery instead of stale intentions remaining active indefinitely |
+| Bounded pagination and failure reporting | Honest coverage and retry states instead of fabricated matches |
+
+## Confirmed public examples
+
+These are fictional test accounts and historical confirmed publications, not claims that the records remain active forever.
+
+| Example | Entity | Confirmed transaction |
+| --- | --- | --- |
+| DevRel job seeker | [Entity](https://rabdi.explorer.arkiv.network/entity/0x814a8b6a7cda9fce6da3f65d5764d461aa2b3d8bdf7d67befb20efbdce9647aa) | [Receipt](https://rabdi.explorer.arkiv.network/tx/0x638379d3c25c6394851276206bb3416eecc9cf2c21117543f05612e9eae2b961) |
+| Developer advocacy recruiter | [Entity](https://rabdi.explorer.arkiv.network/entity/0x85779269b4d42adb1b1ee0b73f960389f3ebc08b8ce3ee14c87914ab8869aed0) | [Receipt](https://rabdi.explorer.arkiv.network/tx/0x95166406dcbb1c148c1e4ab2f3016851c571890e172d2e66949edabe4145a42b) |
+| Workshop collaborator, revision 2 | [Entity](https://rabdi.explorer.arkiv.network/entity/0x4485da1e5050e5d547e72c516c04e2ef9daebd9da386ca2c8e36f8974baebf8b) | [Receipt](https://rabdi.explorer.arkiv.network/tx/0xe2a7208e626d304e353ceabe9a2db973b0e515c15226593e182f3e131de9fb99) |
+
+The workshop revision confirmed at Rabdi block 306425. My later hosted DevRel discovery queried actual Arkiv blocks 314475 and 314476, made a real 46-token embedding batch and returned a possible match with cosine similarity 0.6872726960500519. This is a measured semantic score, not a compatibility probability or consent. Other local runs used a different Nomic model; their scores are separate measurements and are not interchangeable.
+
+The complete hosted onboarding-to-agent-conversation flow is still unfinished. I have not completed a fresh natural-expiry acceptance test or independent-human end-to-end acceptance. World stays paused, and protected contact release remains unavailable. Those limits do not turn earlier confirmed testnet receipts into simulated evidence, but the receipts alone do not prove the whole product works.
+
+For the exact schema and implementation details, see [schema.md](schema.md), `packages/arkiv/src/index.ts`, `packages/server/discovery.ts` and `arkiv/query.ts`.
