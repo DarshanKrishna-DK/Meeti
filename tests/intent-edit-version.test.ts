@@ -46,6 +46,19 @@ beforeEach(() => {
 afterEach(() => { expect(fetch).not.toHaveBeenCalled(); vi.restoreAllMocks(); closeDatabase(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('intent editing requires the exact reviewed server revision', () => {
+  it('saves a reviewed private draft without granting public publication approval', async () => {
+    const owner = await account();
+    const response = await post(owner, { ...payload(), publicApproved: undefined, draftReviewed: true });
+    expect(response.status).toBe(200);
+    const saved = (await response.json()).data;
+    expect(saved.status).toBe('draft'); expect(saved.arkivKey).toBeUndefined(); expect(saved.semantics).toBeUndefined();
+    expect(saved.publicApproved).toBeUndefined(); expect(saved.draftReviewed).toBeUndefined();
+  });
+  it('requires explicit private draft review', async () => {
+    const owner = await account();
+    const response = await post(owner, { ...payload(), publicApproved: undefined });
+    expect(response.status).toBe(400); expect(db().prepare('SELECT id FROM intents').all()).toHaveLength(0);
+  });
   it('saves a new private draft during ENS setup without changing the prepared transaction', async () => {
     const owner = await account(), operationId = randomUUID();
     db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(operationId, owner.id, 'ens', 'prepared', 'fixture-unchanged', new Date().toISOString());

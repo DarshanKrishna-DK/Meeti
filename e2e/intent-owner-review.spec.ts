@@ -10,7 +10,7 @@ const semantics: IntentSemantics = {
   topics: [{ value: 'learning guides', sourceQuote: 'learning guides' }], offers: [], requirements: [{ kind: 'skill', value: 'writing learning guides', sourceQuote: 'writes learning guides', strength: 'mandatory' }],
   clarificationQuestions: [],
 };
-const approvalLabel = 'I approve these fields for public publication. Public records may remain in historical copies after expiry.';
+const approvalLabel = 'I have reviewed this private draft. Publishing requires a separate public review, signature and transaction.';
 
 async function currentState(context: BrowserContext, baseURL: string): Promise<AppState> {
   const response = await context.request.get(`${baseURL}/api/state`);
@@ -18,7 +18,7 @@ async function currentState(context: BrowserContext, baseURL: string): Promise<A
   return (await response.json()).data;
 }
 
-async function openReview(page: Page, context: BrowserContext, baseURL: string, interpretation = semantics) {
+async function openReview(page: Page, context: BrowserContext, baseURL: string, interpretation: IntentSemantics | null = semantics) {
   await installTestMetaMask(context); await signInWithTestWallet(page); await dismissTour(page);
   // Fixture-only model transport and unverified agent setup. No provider or chain success is implied.
   const response = await context.request.post(`${baseURL}/api/agent`, { headers: { origin: baseURL }, data: {
@@ -28,6 +28,7 @@ async function openReview(page: Page, context: BrowserContext, baseURL: string, 
   expect(response.status()).toBe(200);
   await page.route('**/api/intent/structure', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: { output: { summary, goal: 'collaborator', tags: ['learning guides'], semantics: interpretation } } }) }));
   await page.goto('/intents');
+  if (!interpretation) return;
   await page.getByLabel('Your intention, in your own words', { exact: true }).fill(summary);
   await page.getByRole('checkbox', { name: 'I approve sending this text to the configured model to structure my intent.', exact: true }).check();
   await page.getByRole('button', { name: 'Help shape my intent', exact: true }).click();
@@ -40,7 +41,7 @@ test('owner corrects strength, reapproves exact fields, and persists a private d
   const review = page.getByRole('region', { name: 'Review intent interpretation', exact: true });
   const strength = review.getByRole('combobox', { name: 'Strength for requirement 1: writing learning guides', exact: true });
   const approval = page.getByRole('checkbox', { name: approvalLabel, exact: true });
-  const save = page.getByRole('button', { name: 'Save reviewed intent', exact: true });
+  const save = page.getByRole('button', { name: 'Save private draft', exact: true });
   await approval.check(); await expect(save).toBeEnabled();
   await strength.selectOption('preferred');
   await expect(approval).not.toBeChecked(); await expect(save).toBeDisabled();
@@ -98,18 +99,18 @@ test('resolving one generated strength question preserves other unknowns and ess
   await expect(review.getByText(requirementReviewQuestion(second), { exact: true })).toBeVisible();
   await expect(review.getByText(essential, { exact: true })).toBeVisible();
   await page.getByRole('checkbox', { name: approvalLabel, exact: true }).check();
-  await expect(page.getByRole('button', { name: 'Save reviewed intent', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save private draft', exact: true })).toBeDisabled();
   await review.getByLabel('Strength for requirement 2: collaborator', { exact: true }).selectOption('mandatory');
   await expect(review.getByText(requirementReviewQuestion(second), { exact: true })).toHaveCount(0);
   await expect(review.getByText(essential, { exact: true })).toBeVisible();
   await page.getByRole('checkbox', { name: approvalLabel, exact: true }).check();
-  await expect(page.getByRole('button', { name: 'Save reviewed intent', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save private draft', exact: true })).toBeDisabled();
 });
 
 test('stale intent edit retains the draft and requires loading the latest reviewed revision', async ({ page, context, baseURL }) => {
   await openReview(page, context, baseURL!);
   const approval = page.getByRole('checkbox', { name: approvalLabel, exact: true });
-  const save = page.getByRole('button', { name: 'Save reviewed intent', exact: true });
+  const save = page.getByRole('button', { name: 'Save private draft', exact: true });
   await approval.check();
   const initialResponse = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
   await save.click();
@@ -146,4 +147,32 @@ test('stale intent edit retains the draft and requires loading the latest review
   expect(result.request().postDataJSON()).toMatchObject({ id: initial.id, expectedVersion: initial.version + 1 });
   expect(result.status(), await result.text()).toBe(200);
   await expect.poll(async () => (await currentState(context, baseURL!)).intents[0].version).toBe(initial.version + 2);
+});
+
+
+test('reviewed private draft saves without AI interpretation and cannot enter publication review', async ({ page, context, baseURL }) => {
+  await openReview(page, context, baseURL!, null);
+  let interpretationRequests = 0;
+  await page.route('**/api/intent/structure', route => { interpretationRequests++; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'Interpretation is unavailable.' } }) }); });
+  await page.getByLabel('Public intent summary', { exact: true }).fill(summary);
+  await page.getByLabel('Topics', { exact: true }).fill('learning guides');
+  const save = page.getByRole('button', { name: 'Save private draft', exact: true });
+  await expect(save).toBeDisabled();
+  await page.getByRole('checkbox', { name: approvalLabel, exact: true }).check();
+  await expect(save).toBeEnabled();
+  const savedResponse = page.waitForResponse(value => new URL(value.url()).pathname === '/api/intent' && value.request().method() === 'POST');
+  await save.click();
+  const response = await savedResponse;
+  expect(response.status(), await response.text()).toBe(200);
+  expect(response.request().postDataJSON()).not.toHaveProperty('semantics');
+  const [saved] = (await currentState(context, baseURL!)).intents;
+  expect(saved).toMatchObject({ status: 'draft', summary, tags: ['learning-guides'] });
+  expect(saved.semantics).toBeUndefined(); expect(saved.arkivKey).toBeUndefined(); expect(saved.transactionHash).toBeUndefined();
+  const card = page.locator('#saved-intents .saved-intent').filter({ hasText: summary });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Review publication', exact: true })).toBeDisabled();
+  await expect(card).toContainText('Interpret this draft before publication.');
+  expect(interpretationRequests).toBe(0);
+  await page.reload();
+  await expect(page.locator('#saved-intents .saved-intent').filter({ hasText: summary })).toBeVisible();
 });

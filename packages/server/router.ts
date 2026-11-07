@@ -454,7 +454,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
                 await saveIntent(actor.id, value);
                 await queueDiscovery(actor.id, value);
                 clearEmbeddingCache();
-                await audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Public preview approved.`);
+                await audit(actor.id, 'intent', 'draft_saved', `Intent ${value.id} version ${value.version}. Private draft reviewed. Publication requires separate authorization.`);
                 return ok(value);
             });
         }

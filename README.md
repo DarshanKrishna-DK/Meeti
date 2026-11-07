@@ -567,3 +567,7 @@ Next.js · TypeScript · ENSv2 · Arkiv · Human decisions
 <sub>Respect the event build period and submission rules. Publish only after reviewing the code, hosting architecture and genuine evidence. Third-party notices are retained in THIRD_PARTY_NOTICES.md.</sub>
 
 </div>
+
+### Saving an intent draft
+
+Save agent settings first. Fill the intent summary, one to eight topics and a future expiry, then confirm that you reviewed the private draft and select **Save private draft**. AI interpretation is optional for private storage. A draft appears in **Your intentions** and remains available after refresh. Before publication, edit the draft, interpret and review its structured meaning, then separately approve the public signing message and Arkiv transaction. A private draft review does not authorize publication.
