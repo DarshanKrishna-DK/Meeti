@@ -406,6 +406,49 @@ describe('persisted qualification boundaries with fixture providers', () => {
         expect((await listQualificationDtos(left.id))[0].messages).toHaveLength(0);
         expect(db().prepare('SELECT id FROM proposals').all()).toHaveLength(0);
     });
+    it.each([
+        ['ordinary', 'left'], ['ordinary', 'right'], ['single-turn', 'left'], ['single-turn', 'right'],
+    ] as const)('denies revoked %s %s ENS delegation before accepting the generated first turn', async (mode, side) => {
+        let revoked = false;
+        const revokedOwner = side === 'left' ? left : right;
+        external.authority.mockImplementation(async (id: string) => {
+            if (revoked && id === revokedOwner.id) throw new HttpError(403, 'ENS_AUTHORITY_DENIED', 'Fixture current delegated grant is revoked.');
+            return agent(id);
+        });
+        const transport = modelFixture([], 0, async () => { revoked = true; }), onYield = vi.fn(async () => {});
+        const worker: QualificationWorkerOptions = mode === 'single-turn' ? { singleTurn: true, onYield } : {};
+        await expect(startQualification(left.id, left.intent.id, right.intent.arkivKey!, () => {}, () => {}, worker))
+            .rejects.toMatchObject({ status: 403, code: 'ENS_AUTHORITY_DENIED' });
+        const row = db().prepare('SELECT id FROM qualifications').get() as { id: string }, saved = (await qualificationRecord(row.id))!;
+        expect(saved.row).toMatchObject({ state: 'blocked', lease_token: null, lease_until: null });
+        expect(saved.value.failureCode).toBe('ENS_AUTHORITY_DENIED'); expect(saved.value.retryable).toBe(false);
+        expect(saved.value.messages).toHaveLength(0); expect(saved.value.attempts).toHaveLength(1);
+        for (const owner of [left, right]) {
+            const dto = (await listQualificationDtos(owner.id))[0];
+            expect(dto.messages).toHaveLength(0); expect(dto.canRetry).toBe(false); expect(dto.proposalId).toBeNull();
+        }
+        expect(external.authority).toHaveBeenCalledWith(revokedOwner.id, 'negotiate', 1);
+        expect(transport).toHaveBeenCalledOnce(); expect(onYield).not.toHaveBeenCalled();
+        expect(db().prepare('SELECT id FROM proposals').all()).toHaveLength(0);
+    });
+    it('rechecks delegated ENS authority at state completion before creating a proposal from previously accepted turns', async () => {
+        let revoked = false;
+        external.authority.mockImplementation(async (id: string) => {
+            if (revoked && id === right.id) throw new HttpError(403, 'ENS_AUTHORITY_DENIED', 'Fixture grant revoked before completion.');
+            return agent(id);
+        });
+        const transport = modelFixture(), realQualify = external.qualify.getMockImplementation()!;
+        external.qualify.mockImplementation((input: QualificationInput) => realQualify({ ...input, onProgress: async (event: Parameters<NonNullable<QualificationInput['onProgress']>>[0]) => {
+            if (event.kind === 'state_completed') revoked = true;
+            await input.onProgress?.(event);
+        } }));
+        await expect(start()).rejects.toMatchObject({ status: 403, code: 'ENS_AUTHORITY_DENIED' });
+        const dto = (await listQualificationDtos(left.id))[0], saved = (await qualificationRecord(dto.id))!;
+        expect(saved.row.state).toBe('blocked'); expect(saved.value.messages).toHaveLength(2);
+        expect(saved.value.attempts).toHaveLength(2); expect(saved.value.result).toBeNull();
+        expect(dto.proposalId).toBeNull(); expect(dto.failureCode).toBe('ENS_AUTHORITY_DENIED');
+        expect(transport).toHaveBeenCalledTimes(2); expect(db().prepare('SELECT id FROM proposals').all()).toHaveLength(0);
+    });
     it('checks identity again before the next turn and does not send it after revocation', async () => {
         let rightChecks = 0;
         external.identity.mockImplementation(async (id: string) => {

@@ -10,6 +10,7 @@ import { HttpError, requireValue } from './security';
 import { answerFieldId, qualificationFields, qualificationRecord, type QualificationAnswer, type QualificationData, type QualificationPublicIdentityBinding, type QualificationRow } from './qualification-context';
 import type { RunningStage } from './agent-runs';
 import { AgentError, qualificationCheckpointSchema, qualificationOutputDiagnostic } from '../agents/src';
+import { providerDiagnosticSchema } from '../agents/src/provider';
 import { withEnsReadScope } from '../ens/rpc-transport';
 type RecordValue = NonNullable<Awaited<ReturnType<typeof qualificationRecord>>>;
 export type QualificationContinuation = { qualificationId: string; version: number; checkpointDigest: string };
@@ -124,7 +125,9 @@ function providerFailureDiagnostic(error: AgentError): string | null {
     if (error.code !== 'provider' || !detail || !Number.isInteger(detail.status) || detail.status < 400 || detail.status > 599) return null;
     // Revalidate metadata at persistence. Messages and unknown upstream codes are never stored.
     const code = typeof detail.code === 'string' && persistedProviderCodes.has(detail.code) ? detail.code : undefined;
-    return `http_${detail.status}${code ? `_${code}` : ''}`;
+    const parsed = providerDiagnosticSchema.safeParse(detail.diagnostic);
+    const diagnostic = parsed.success ? [parsed.data.parameter, parsed.data.reason, parsed.data.schemaKeyword].filter(Boolean).join('_') : '';
+    return `http_${detail.status}${code ? `_${code}` : ''}${diagnostic ? `_${diagnostic}` : ''}`;
 }
 function canRetry(value: QualificationData) {
     // Older raw provider read failures lacked a retry classification. A manual retry still
@@ -284,8 +287,17 @@ async function execute(userId: string, id: string, version: number, checkSession
                 });
             },
             onProgress: async (event) => {
-                if (event.kind === 'turn_completed' || event.kind === 'state_completed')
-                    await currentPublicIdentities(await owned(userId, id));
+                if (event.kind === 'turn_completed' || event.kind === 'state_completed') {
+                    const observed = await owned(userId, id);
+                    await currentPublicIdentities(observed);
+                    // Public identity association does not establish current delegated action authority.
+                    // Recheck after inference before exposing a newly generated turn to either owner.
+                    await withEnsReadScope(async () => {
+                        await authority(observed.row.left_user, 'negotiate', observed.value.snapshot.leftPolicy.version);
+                        await authority(observed.row.right_user, 'negotiate', observed.value.snapshot.rightPolicy.version);
+                    });
+                    await current(observed);
+                }
                 await atomic(async () => {
                     await checkSession();
                     await progress('exchanging_context');

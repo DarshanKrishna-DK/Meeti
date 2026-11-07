@@ -15,6 +15,18 @@ async function request(path: string, body?: unknown, signal?: AbortSignal) {
   return { status: response.status, data: payload.data };
 }
 type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'expired';
+type EnqueuedTask = { kind: 'queued'; taskId: string; status: 'queued' | 'running'; deduplicated: boolean };
+/** Submit once and return the durable receipt so the activity page can follow real progress. */
+export async function apiEnqueue<T = unknown>(path: string, body: unknown): Promise<EnqueuedTask | { kind: 'completed'; data: T }> {
+  const result = await request(path, body);
+  if (result.status !== 202) return { kind: 'completed', data: result.data as T };
+  const task = result.data;
+  if (!task || typeof task.taskId !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(task.taskId)
+    || !['queued', 'running'].includes(task.status) || typeof task.deduplicated !== 'boolean') {
+    throw new Error('The queued action did not return a valid task receipt. Check Agent activity before submitting another request.');
+  }
+  return { kind: 'queued', taskId: task.taskId, status: task.status, deduplicated: task.deduplicated };
+}
 type PollVisibility = { hidden: boolean; addEventListener(type: 'visibilitychange', listener: () => void): void; removeEventListener(type: 'visibilitychange', listener: () => void): void };
 /** Follow only existing authenticated task IDs. This watcher never submits or retries an action. */
 export function watchAgentTasks(options: {

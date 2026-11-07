@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { watchAgentTasks } from '../components/api-client';
+import { api, apiEnqueue, watchAgentTasks } from '../components/api-client';
 
 class Visibility extends EventTarget {
   hidden = false;
@@ -10,6 +10,58 @@ let stop: (() => void) | undefined;
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { stop?.(); stop = undefined; vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function flush() { await vi.advanceTimersByTimeAsync(0); }
+
+describe('enqueue-only client submission with fixture HTTP and no provider calls', () => {
+  it.each(['queued', 'running'] as const)('returns an authenticated %s descriptor immediately without polling or resubmitting', async status => {
+    const taskId = randomUUID(), body = { intentId: randomUUID(), candidateKey: `0x${'aa'.repeat(32)}` };
+    const fetcher = vi.fn(async () => Response.json({ data: { taskId, status, deduplicated: status === 'running' } }, { status: 202 }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(apiEnqueue('proposals', body)).resolves.toEqual({ kind: 'queued', taskId, status, deduplicated: status === 'running' });
+    expect(fetcher).toHaveBeenCalledWith('/api/proposals', expect.objectContaining({ method: 'POST', body: JSON.stringify(body), credentials: 'same-origin', redirect: 'error' }));
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it('preserves a synchronous local result without claiming a queued task', async () => {
+    const result = { id: null, qualificationId: randomUUID() };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: result })));
+    await expect(apiEnqueue('proposals', {})).resolves.toEqual({ kind: 'completed', data: result });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { taskId: '../foreign-task', status: 'queued', deduplicated: false },
+    { taskId: 'a'.repeat(36), status: 'queued', deduplicated: false },
+    { taskId: randomUUID(), status: 'completed', deduplicated: false },
+    { taskId: randomUUID(), status: 'queued', deduplicated: 'true' },
+    { taskId: randomUUID(), status: 'queued' },
+    null,
+  ])('rejects a malformed 202 receipt without polling or repeating the mutation', async data => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data }, { status: 202 })));
+    await expect(apiEnqueue('proposals', {})).rejects.toThrow('Check Agent activity');
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('does not repeat an uncertain submission or a denied request', async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('fixture_private_network_details'))
+      .mockResolvedValueOnce(Response.json({ error: { message: 'Wait for the current review.' } }, { status: 429 }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(apiEnqueue('proposals', {})).rejects.toThrow('Check Agent activity');
+    expect(fetcher).toHaveBeenCalledOnce();
+    await expect(apiEnqueue('proposals', {})).rejects.toThrow('Wait for the current review.');
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it('keeps the existing regular api terminal-polling behavior for other callers', async () => {
+    const taskId = randomUUID(), completed = { qualificationId: randomUUID() };
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ data: { taskId, status: 'queued', deduplicated: false } }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ data: { taskId, status: 'running' } }))
+      .mockResolvedValueOnce(Response.json({ data: { taskId, status: 'completed', result: completed } }));
+    vi.stubGlobal('fetch', fetcher);
+    const pending = api('proposals', {});
+    await flush(); await vi.advanceTimersByTimeAsync(6000);
+    await expect(pending).resolves.toEqual(completed);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/proposals', `/api/agent-tasks/${taskId}`, `/api/agent-tasks/${taskId}`]);
+  });
+});
 
 describe('visible activity polling of already authorized task IDs with fake HTTP only', () => {
   it('follows queued and running yields through completion with GET only and refreshes each observed step', async () => {

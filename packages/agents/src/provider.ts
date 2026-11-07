@@ -1,10 +1,21 @@
 import { z } from "zod";
 
+const diagnosticParameters = ["response_format", "response_format.json_schema", "response_format.json_schema.schema", "response_format.json_schema.strict",
+  "model", "messages", "max_completion_tokens", "max_tokens", "reasoning_effort", "temperature", "top_p", "store", "stream", "n", "tools", "tool_choice"] as const;
+const diagnosticReasons = ["schema_unsupported_keyword", "schema_required_fields", "schema_object_not_closed", "schema_invalid", "parameter_unsupported", "parameter_invalid"] as const;
+const diagnosticKeywords = ["anyOf", "oneOf", "allOf", "not", "if", "then", "else", "const", "enum", "type", "required", "additionalProperties", "patternProperties",
+  "unevaluatedProperties", "dependentRequired", "prefixItems", "items", "minItems", "maxItems", "uniqueItems", "minLength", "maxLength", "pattern", "format", "minimum", "maximum", "$ref", "$defs"] as const;
+/** Provider-reported categories only. A category is not independently verified evidence of the failure cause. */
+export const providerDiagnosticSchema = z.object({
+  parameter: z.enum(diagnosticParameters).optional(), reason: z.enum(diagnosticReasons).optional(), schemaKeyword: z.enum(diagnosticKeywords).optional(),
+}).strict();
+export type ProviderDiagnostic = z.infer<typeof providerDiagnosticSchema>;
+
 export class AgentError extends Error {
   constructor(
     public readonly code: "configuration" | "budget" | "timeout" | "provider" | "output" | "policy" | "input",
     message: string,
-    public readonly providerDetail?: { status: number; code?: string },
+    public readonly providerDetail?: { status: number; code?: string; diagnostic?: ProviderDiagnostic },
   ) {
     super(message);
     this.name = "AgentError";
@@ -75,8 +86,40 @@ const providerErrorCodes = new Set([
   "authentication_error", "permission_error", "server_error", "service_unavailable",
 ]);
 
-/** Upstream messages can contain submitted context or failed generations. Retain only known codes. */
-async function readProviderErrorCode(response: Response): Promise<string | undefined> {
+function canonicalParameter(value: unknown): ProviderDiagnostic["parameter"] {
+  if (typeof value !== 'string' || value.length > 300) return undefined;
+  if (diagnosticParameters.includes(value as typeof diagnosticParameters[number])) return value as ProviderDiagnostic["parameter"];
+  // Retain only fixed request fields. User-authored schema keys and message indexes are never returned.
+  if (/^response_format\.json_schema\.schema(?:\.|\[)/.test(value)) return 'response_format.json_schema.schema';
+  if (/^messages(?:\.|\[)/.test(value)) return 'messages';
+  return undefined;
+}
+function classifyProviderDiagnostic(details: Record<string, unknown>, code?: string): ProviderDiagnostic | undefined {
+  const diagnostic: ProviderDiagnostic = {};
+  const parameter = canonicalParameter(details.param);
+  if (parameter) diagnostic.parameter = parameter;
+  // Do not scan failed_generation, arbitrary fields, unknown error types or unbounded strings.
+  const message = typeof details.message === 'string' && details.message.length <= 4096 && ['invalid_request_error', 'json_validate_failed'].includes(code || '') ? details.message : '';
+  if (message) {
+    const unsupported = /\bunsupported\b|\bnot (?:supported|permitted|allowed)\b/i;
+    const keyword = diagnosticKeywords.find(keyword => {
+      const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(?:['"\x60]${escaped}['"\x60]\\s+(?:is\\s+)?not (?:supported|permitted|allowed)|unsupported\\s+(?:schema\\s+)?keyword\\s*:?\\s*['"\x60]?${escaped}(?:['"\x60]|\\b))`, 'i').test(message);
+    });
+    if (keyword) { diagnostic.reason = 'schema_unsupported_keyword'; diagnostic.schemaKeyword = keyword; }
+    else if (/additionalProperties/i.test(message) && /(?:must|is required to)\s+(?:be\s+)?(?:supplied and (?:to be )?)?false/i.test(message)) {
+      diagnostic.reason = 'schema_object_not_closed'; diagnostic.schemaKeyword = 'additionalProperties';
+    } else if (/\brequired\b/i.test(message) && /(?:every|all) (?:key|propert)|missing (?:required|key|propert)/i.test(message)) {
+      diagnostic.reason = 'schema_required_fields'; diagnostic.schemaKeyword = 'required';
+    } else if (/\binvalid (?:json )?schema\b|\bschema (?:is )?invalid\b/i.test(message)) diagnostic.reason = 'schema_invalid';
+    else if (parameter && unsupported.test(message)) diagnostic.reason = 'parameter_unsupported';
+    else if (parameter && /\binvalid (?:value|parameter|argument)\b|\bmust be\b/i.test(message)) diagnostic.reason = 'parameter_invalid';
+  }
+  return Object.keys(diagnostic).length ? providerDiagnosticSchema.parse(diagnostic) : undefined;
+}
+
+/** Inspect a bounded error envelope. Neither upstream text nor failed generations leave this function. */
+async function readProviderError(response: Response): Promise<{ code?: string; diagnostic?: ProviderDiagnostic } | undefined> {
   const reader = response.body?.getReader();
   if (!reader) return undefined;
   const chunks: Uint8Array[] = [];
@@ -98,11 +141,13 @@ async function readProviderErrorCode(response: Response): Promise<string | undef
     const error = parsed.error;
     if (!error || typeof error !== "object") return undefined;
     const details = error as Record<string, unknown>;
+    let code: string | undefined;
     for (const field of ["code", "type"] as const) {
       const value = details[field];
-      if (typeof value === "string" && providerErrorCodes.has(value)) return value;
+      if (typeof value === "string" && providerErrorCodes.has(value)) { code = value; break; }
     }
-    return undefined;
+    const diagnostic = classifyProviderDiagnostic(details, code);
+    return code || diagnostic ? { ...(code ? { code } : {}), ...(diagnostic ? { diagnostic } : {}) } : undefined;
   } catch {
     return undefined;
   } finally {
@@ -199,8 +244,8 @@ export class OpenAICompatibleProvider implements StructuredProvider {
         redirect: "error",
       });
       if (!response.ok) {
-        const providerCode = await readProviderErrorCode(response);
-        throw new AgentError("provider", `The AI provider returned HTTP ${response.status}${providerCode ? ` (${providerCode})` : ""}.`, { status: response.status, ...(providerCode ? { code: providerCode } : {}) });
+        const detail = await readProviderError(response);
+        throw new AgentError("provider", `The AI provider returned HTTP ${response.status}${detail?.code ? ` (${detail.code})` : ""}.`, { status: response.status, ...detail });
       }
       if (Number(response.headers.get("content-length") ?? 0) > 128_000) throw new AgentError("output", "The AI response exceeded its size limit.");
       const reader = response.body?.getReader();

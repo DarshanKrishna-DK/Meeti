@@ -124,8 +124,11 @@ export async function route(request: Request, path: string[]): Promise<Response>
                 await requireRequestActor(request, actor);
                 return ok(snapshot);
             }
-            if (key === 'qualifications')
-                return ok(await listQualificationDtos(actor.id));
+            if (key === 'qualifications') {
+                const conversations = await listQualificationDtos(actor.id);
+                await requireRequestActor(request, actor);
+                return ok(conversations);
+            }
             if (key === 'auto-qualifications') {
                 const batches = await listAutoQualifications(actor.id);
                 await requireRequestActor(request, actor);
