@@ -5,6 +5,7 @@ import type { NameClaim } from '../components/setup-state';
 // Only name service responses are fixtures. No ENS transaction or live registration is claimed.
 for (const width of [1280,320]) test(`name request, receipt-confirmed selection and guide continuation at ${width}px (UI fixtures)`,async({page,context,baseURL})=>{
   await page.setViewportSize({width,height:900});
+  await page.emulateMedia({reducedMotion:'reduce'});
   const wallet=await installTestMetaMask(context);
   await signInWithTestWallet(page); await dismissTour(page);
   const saved=(await (await context.request.get(`${baseURL}/api/state`)).json()).data;
@@ -55,6 +56,9 @@ for (const width of [1280,320]) test(`name request, receipt-confirmed selection 
   await guide.getByRole('button',{name:'Use this name',exact:true}).click();
   await expect(guide).toContainText('Step 7 of 8');
   await expect(guide).toContainText(agentName);
+  const mascot=guide.locator('[data-renderer="shaded-svg"]');
+  await expect(mascot).toHaveCount(1);
+  expect(await mascot.evaluate(element=>Array.from(element.querySelectorAll('*')).every(part=>getComputedStyle(part).animationName==='none'))).toBe(true);
   await guide.screenshot({path:`artifacts/name-setup-guide-${width}.png`});
   await expect(guide.getByRole('link',{name:'Open agent setup',exact:true})).toHaveAttribute('href','/agent#name-request');
   await expect(guide).toContainText('Current authority must pass before publication or matching.');

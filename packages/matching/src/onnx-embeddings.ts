@@ -18,15 +18,26 @@ export type OnnxEmbeddingConfig = Omit<z.input<typeof schema>, 'model' | 'modelR
 export type OnnxEncoder = { encode(text: string): Promise<{ vector: unknown; inputTokens: number }> };
 type Dependencies = { load?: (directory: string) => Promise<OnnxEncoder>; verify?: (directory: string) => Promise<unknown>; now?: () => number };
 
+/** Fixed diagnostics only. Native exceptions can contain private paths or input text. */
+export function onnxLoadFailure(stage: 'library' | 'tokenizer' | 'model', error: unknown) {
+  const value = error instanceof Error ? error.message : '';
+  const reason = /cannot find (?:module|package)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/i.test(value) ? 'missing-module'
+    : /GLIBC|GLIBCXX|invalid ELF|wrong ELF|NODE_MODULE_VERSION/i.test(value) ? 'native-compatibility'
+    : /shared object|DLL|dlopen|dynamic library/i.test(value) ? 'native-library'
+    : /ENOENT|no such file|not found locally/i.test(value) ? 'missing-file'
+    : /EACCES|EROFS|permission denied|read-only file system/i.test(value) ? 'filesystem-access'
+    : /unsupported|not supported/i.test(value) ? 'unsupported-runtime' : 'initialization';
+  return new MatchingError('provider', `The local semantic model is unavailable (${stage}:${reason}). Retry after the server configuration is repaired.`);
+}
 async function loadEncoder(directory: string): Promise<OnnxEncoder> {
-  const library = await import('@huggingface/transformers');
+  const library = await import('@huggingface/transformers').catch(error => { throw onnxLoadFailure('library', error); });
   if (library.env.version !== ONNX_LIBRARY_VERSION) throw new MatchingError('configuration', 'The ONNX library version differs from the pinned embedding recipe.');
   library.env.allowRemoteModels = false;
   library.env.allowLocalModels = true;
   library.env.useFSCache = false;
-  const tokenizer = await library.AutoTokenizer.from_pretrained(directory, { local_files_only: true });
+  const tokenizer = await library.AutoTokenizer.from_pretrained(directory, { local_files_only: true }).catch(error => { throw onnxLoadFailure('tokenizer', error); });
   const model = await library.AutoModel.from_pretrained(directory, { local_files_only: true, device: 'cpu', dtype: 'q8',
-    session_options: { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' } });
+    session_options: { intraOpNumThreads: 1, interOpNumThreads: 1, executionMode: 'sequential' } }).catch(error => { throw onnxLoadFailure('model', error); });
   return { async encode(text) {
     const inputs = tokenizer(text, { padding: false, truncation: false, return_tensor: true });
     const tensors = new Set<InstanceType<typeof library.Tensor>>(Object.values(inputs));
@@ -102,7 +113,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
       this.encoder ??= this.load(this.config.directory);
       let encoder: OnnxEncoder;
       try { encoder = await this.encoder; }
-      catch { this.encoder = undefined; throw new MatchingError('provider', 'The local ONNX encoder could not be loaded.'); }
+      catch (error) { this.encoder = undefined; if (error instanceof MatchingError) throw error; throw onnxLoadFailure('model', error); }
       for (const [key, text] of missing) {
         this.assertDeadline(deadline);
         let output: Awaited<ReturnType<OnnxEncoder['encode']>>;

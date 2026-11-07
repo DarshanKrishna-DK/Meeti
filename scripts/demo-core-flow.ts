@@ -125,7 +125,9 @@ async function call<T>(label: Label, path: string, body?: unknown, timeoutMs = r
       'A known intent category and direction require quoted evidence.': 'MISSING_EVIDENCE',
       'An ambiguous essential intent needs clarification before matching.': 'MISSING_CLARIFICATION',
     };
-    const detail = result.error?.code === 'AI_OUTPUT' ? safeOutputReasons[result.error.message || ''] : undefined;
+    const semanticDiagnostic = /\((library|tokenizer|model):(missing-module|native-compatibility|native-library|missing-file|filesystem-access|unsupported-runtime|initialization)\)/.exec(result.error?.message || '');
+    const detail = result.error?.code === 'AI_OUTPUT' ? safeOutputReasons[result.error.message || '']
+      : result.error?.code === 'SEMANTIC_PROVIDER' && semanticDiagnostic ? `${semanticDiagnostic[1]}_${semanticDiagnostic[2]}`.replaceAll('-', '_').toUpperCase() : undefined;
     throw new DemoError(`HTTP_${response.status}_${String(result.error?.code || 'REQUEST_FAILED').replace(/[^A-Za-z0-9_]/g, '').slice(0, 100)}${detail ? `_${detail}` : ''}`);
   }
   if (response.status === 202 && body !== undefined && (path === 'proposals' || /^qualifications\/[0-9a-f-]+\/(resume|retry)$/.test(path))) {

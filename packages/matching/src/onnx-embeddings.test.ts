@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { OnnxEmbeddingProvider, type OnnxEmbeddingConfig, type OnnxEncoder } from './onnx-embeddings';
+import { OnnxEmbeddingProvider, onnxLoadFailure, type OnnxEmbeddingConfig, type OnnxEncoder } from './onnx-embeddings';
 import { createEmbeddingProviderFromEnv, MatchingError } from './embeddings';
 import { ONNX_DIMENSIONS, ONNX_MODEL, ONNX_REVISION, verifyOnnxAssets } from './onnx-model.mjs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -15,6 +15,12 @@ function fixture(options: Partial<OnnxEmbeddingConfig> = {}, encode: OnnxEncoder
 }
 
 describe('explicit pinned local ONNX embeddings', () => {
+  it('classifies loader failures without exposing native exception details', () => {
+    for (const [message, code] of [['Cannot find package private-input', 'missing-module'], ['GLIBCXX_3.4 private-input', 'native-compatibility'], ['EROFS private-input', 'filesystem-access'], ['private-input', 'initialization']]) {
+      const failure = onnxLoadFailure('library', new Error(message));
+      expect(failure.code).toBe('provider'); expect(failure.message).toContain(`library:${code}`); expect(failure.message).not.toContain('private-input');
+    }
+  });
   it.each([{ model: 'other' }, { modelRevision: 'other' }, { dimensions: 768 }, { maxCostUsd: 1 }, { inputUsdPerMillion: 1 }])('rejects an incompatible or paid recipe %j', override => {
     expect(() => fixture(override)).toThrow(MatchingError);
   });
