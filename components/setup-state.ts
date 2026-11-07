@@ -11,7 +11,7 @@ export function confirmedName(claim: NameClaim | null | undefined): claim is Nam
 export function nameRequestStatus(claim: NameClaim | null | undefined) {
   if (!claim) return { label: 'Choose a name', title: 'A name of your own.', description: 'Choose how your networking identity will appear.', step: 0 };
   if (confirmedName(claim)) return { label: 'Registration confirmed', title: 'Your name is registered.', description: 'The registration receipt is confirmed. Your agent still needs its own setup and permission check.', step: 2 };
-  if (claim.state === 'requested') return { label: 'Request received', title: 'Your name request is saved.', description: 'It is waiting for registration. Sending a request does not register the name.', step: 1 };
+  if (claim.state === 'requested') return { label: 'Request received', title: 'Your name request is saved.', description: 'The Meeti issuer must approve and register this name. Registration is not automatic, and waiting or refreshing does not start it. You can finish your profile while registration is arranged.', step: 1 };
   if (claim.state === 'prepared') return { label: 'Review prepared', title: 'Registration is being reviewed.', description: 'A transaction review is prepared. This does not mean a transaction has been sent or confirmed.', step: 1 };
   if (claim.state === 'withdrawn') return { label: 'Request withdrawn', title: 'Choose a different name.', description: 'Your request is withdrawn. You can review another name below.', step: 0 };
   return { label: 'Check registration', title: 'Registration needs a check.', description: 'Refresh the request before continuing. A confirmed name has not been established here.', step: 1 };

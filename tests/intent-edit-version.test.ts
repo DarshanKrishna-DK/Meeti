@@ -46,6 +46,27 @@ beforeEach(() => {
 afterEach(() => { expect(fetch).not.toHaveBeenCalled(); vi.restoreAllMocks(); closeDatabase(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('intent editing requires the exact reviewed server revision', () => {
+  it('saves a new private draft during ENS setup without changing the prepared transaction', async () => {
+    const owner = await account(), operationId = randomUUID();
+    db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(operationId, owner.id, 'ens', 'prepared', 'fixture-unchanged', new Date().toISOString());
+    const response = await post(owner, payload());
+    expect(response.status).toBe(200);
+    const saved = (await response.json()).data;
+    expect(saved.status).toBe('draft'); expect(saved.arkivKey).toBeUndefined();
+    expect(db().prepare('SELECT state,data FROM operations WHERE id=?').get(operationId)).toEqual({ state: 'prepared', data: 'fixture-unchanged' });
+  });
+  it.each(['ens', 'arkiv:fixture:1'])('keeps an existing intent immutable while %s is pending', async kind => {
+    const owner = await account(), previous = await fixture(owner);
+    db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(randomUUID(), owner.id, kind, 'prepared', 'fixture-unchanged', new Date().toISOString());
+    const before = snapshot(), response = await post(owner, payload(previous));
+    expect(response.status).toBe(409); expect((await response.json()).error.code).toBe('TRANSACTION_UNRESOLVED'); expect(snapshot()).toEqual(before);
+  });
+  it('retains the pending Arkiv publication guard even for new private drafts', async () => {
+    const owner = await account();
+    db().prepare('INSERT INTO operations VALUES(?,?,?,?,?,?)').run(randomUUID(), owner.id, 'arkiv:fixture:1', 'submitted', 'fixture-unchanged', new Date().toISOString());
+    const response = await post(owner, payload()); expect(response.status).toBe(409);
+    expect(db().prepare('SELECT id FROM intents').all()).toHaveLength(0);
+  });
   it.each(['published', 'draft'] as const)('saves one reviewed %s revision as a private draft and invalidates discovery', async status => {
     const owner = await account(), previous = await fixture(owner, status);
     const response = await post(owner, payload(previous)); expect(response.status).toBe(200);

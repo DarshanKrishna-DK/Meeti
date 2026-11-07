@@ -56,6 +56,11 @@ test('owner corrects strength, reapproves exact fields, and persists a private d
   });
   await save.click();
   await expect(page.getByRole('alert').filter({ hasText: 'Intent save denied by the test authorization boundary.' }).first()).toBeVisible();
+  const inlineSaveError=page.locator('.intent-review-form [data-intent-save-error]');
+  await expect(inlineSaveError).toContainText('Your intent was not saved.');
+  await expect(inlineSaveError).toContainText('Intent save denied by the test authorization boundary.');
+  await expect(inlineSaveError).toBeFocused();
+  await expect(inlineSaveError).toBeInViewport();
   expect((await currentState(context, baseURL!)).intents).toEqual([]);
   await expect(strength).toHaveValue('preferred');
   reject = false;
@@ -70,6 +75,8 @@ test('owner corrects strength, reapproves exact fields, and persists a private d
   const [saved] = (await currentState(context, baseURL!)).intents;
   expect(saved).toMatchObject({ status: 'draft', summary, semantics: { requirements: [{ ...semantics.requirements[0], strength: 'preferred' }] } });
   expect(saved.arkivKey).toBeUndefined(); expect(saved.transactionHash).toBeUndefined();
+  await expect(page.locator('#saved-intents .saved-intent').filter({hasText:summary})).toHaveCount(1);
+  await expect(page.locator('#saved-intents')).toContainText('draft');
   await page.reload(); await page.getByRole('button', { name: 'Edit intent', exact: true }).click();
   await expect(strength).toHaveValue('preferred'); await expect(approval).not.toBeChecked();
   await strength.selectOption('unknown'); await expect(save).toBeDisabled();

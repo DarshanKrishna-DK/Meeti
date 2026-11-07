@@ -301,8 +301,8 @@ Agent Studio shows **Your Meeti name** under the configured Sepolia project pare
 For a new name, follow this sequence:
 
 1. Select **Request this name** after reviewing its public name and wallet association.
-2. While registration is pending, use **Check registration**. A saved request or prepared transaction is not a claimed name.
-3. After the confirmed issuance receipt appears, select **Use this name**. The exact agent name fills the settings form and receives keyboard focus.
+2. The project issuer must review, sign and confirm the registration transactions. There is no automatic background issuer on the hosted demo. **Check registration** refreshes the saved status; waiting alone does not register a name. A saved request or prepared transaction is not a claimed name.
+3. Use the same wallet and environment where registration was completed. Local SQLite and hosted Supabase accounts have separate saved state. After the confirmed issuance receipt appears, select **Use this name**. The exact agent name fills the settings form and receives keyboard focus.
 4. Review the separate delegate and permissions, then select **Save agent settings**.
 5. Follow **Complete agent registration and permissions**, review each required transaction, then select **Check current permissions**.
 6. The guide can preview **First intent** and can be reopened from the dashboard. It resumes from saved state; previewing the instructions does not complete setup. The dashboard keeps an unverified agent on permission setup, and each protected action performs its own live checks.

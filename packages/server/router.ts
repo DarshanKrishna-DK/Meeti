@@ -436,7 +436,10 @@ export async function route(request: Request, path: string[]): Promise<Response>
             const input = intentInputSchema.parse(body);
             return await atomic(async () => {
                 const a = requireValue(await agent(actor.id), 'Set up your agent before creating a networking intent.');
-                if (await db().prepare('SELECT id FROM operations WHERE user_id=? AND state IN (?,?)').get(actor.id, 'prepared', 'submitted'))
+                const pending = await db().prepare('SELECT kind FROM operations WHERE user_id=? AND state IN (?,?)').all(actor.id, 'prepared', 'submitted') as { kind: string }[];
+                // A new private draft does not alter an ENS transaction or authorize publication.
+                // Existing intent edits and pending publication snapshots retain their transaction guard.
+                if (pending.some(operation => Boolean(input.id) || operation.kind !== 'ens'))
                     throw new HttpError(409, 'TRANSACTION_UNRESOLVED', 'Reconcile the pending transaction before editing an intent.');
                 if (input.semantics)
                     assertIntentEvidence(input.summary, input.semantics);
