@@ -1,0 +1,26 @@
+.panel { padding: clamp(22px, 4vw, 36px); scroll-margin-top: 96px; }
+.header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; }
+.header h2 { font-family:Jaini,sans-serif; font-size:clamp(30px,4vw,40px); font-weight:400; line-height:1.1; margin:0 0 12px; }
+.header p { max-width:60ch; color:var(--muted); line-height:1.7; margin-bottom:16px; }
+.icon { display:grid; place-items:center; flex:0 0 48px; width:48px; height:48px; border-radius:16px; background:var(--surface-tint); color:var(--accent); }
+.steps { list-style:none; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:0; margin:8px 0 26px; }
+.steps li { display:flex; align-items:center; gap:9px; min-width:0; font-size:12px; color:var(--muted); }
+.steps span { display:grid; place-items:center; flex:0 0 26px; width:26px; height:26px; border:1px solid var(--line); border-radius:50%; }
+.current span { background:var(--accent); border-color:var(--accent); color:var(--paper); }
+.name { background:var(--surface-tint); border:1px solid var(--line); border-radius:18px; padding:20px; margin-bottom:20px; min-width:0; }
+.name strong { display:block; font-size:clamp(16px,2vw,23px); line-height:1.5; overflow-wrap:anywhere; color:var(--heading); margin:8px 0; }
+.name p { color:var(--muted); font-size:12px; line-height:1.7; margin:6px 0; overflow-wrap:anywhere; }
+.status { display:inline-flex; align-items:center; gap:7px; font-size:12px; color:var(--accent); font-weight:650; }
+.form { display:grid; gap:15px; max-width:660px; }
+.form > label:not(.consent) { display:grid; gap:8px; font-weight:650; font-size:13px; }
+.preview { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+.consent { display:flex; align-items:flex-start; gap:10px; font-size:13px; line-height:1.7; }
+.consent input { flex:0 0 auto; margin-top:6px; }
+.actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:18px; }
+.details { margin-top:22px; border-top:1px solid var(--line); padding-top:18px; }
+.details summary { cursor:pointer; font-size:13px; font-weight:650; color:var(--accent); }
+.details p { line-height:1.75; font-size:13px; color:var(--muted); }
+.receipts { display:grid; gap:10px; padding:12px 0; overflow-wrap:anywhere; }
+.transaction { margin-top:24px; border-top:1px solid var(--line); padding-top:22px; }
+.transaction pre { overflow-wrap:anywhere; white-space:pre-wrap; }
+@media(max-width:600px) { .header {gap:12px;} .icon {flex-basis:38px;width:38px;height:38px;border-radius:12px;} .steps {gap:8px;} .steps li {font-size:10px;gap:5px;align-items:flex-start;} .steps span {flex-basis:22px;width:22px;height:22px;} .actions > .button {width:100%;} .name {padding:16px;} }

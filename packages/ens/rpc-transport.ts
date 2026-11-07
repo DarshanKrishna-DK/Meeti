@@ -82,10 +82,13 @@ export function classifyEnsReadFailure(error: unknown) {
 // viem's default retry policy includes 403, internal RPC errors and unbounded Retry-After delays.
 // Keep it disabled and retry only classified read failures once, with a fixed bounded delay.
 export function createEnsReadTransport(rpcUrl: string, options: { fetcher?: typeof fetch; onFailure?: (diagnostic: EnsReadFailureDiagnostic) => void } = {}): Transport {
+  const interval = Number(process.env.ENS_RPC_READ_INTERVAL_MS || '300');
+  const batchSize = Number(process.env.ENS_RPC_BATCH_SIZE || '4');
+  if (!Number.isInteger(interval) || interval < 100 || interval > 1500 || !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 4) throw new Error('ens_rpc_read_pacing_invalid');
   const methods = { include: [...readMethods] };
   const base = rpcUrl.startsWith("wss://") ? webSocket(rpcUrl, { timeout: 10000, retryCount: 0, methods, reconnect: false, keepAlive: false }) : http(rpcUrl, {
-    batch: { batchSize: 4, wait: 10 },
-    fetchFn: createPacedReadFetch(options.fetcher),
+    batch: { batchSize, wait: 10 },
+    fetchFn: createPacedReadFetch(options.fetcher, interval),
     timeout: 10000, retryCount: 0, methods,
   });
   return (parameters) => {

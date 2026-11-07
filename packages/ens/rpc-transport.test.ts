@@ -5,6 +5,20 @@ import { classifyEnsReadFailure, createEnsReadTransport, createPacedReadFetch, w
 function request(url: string, body: unknown) { return new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
 describe("ENS read-only RPC transport", () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+  it('supports smaller provider bursts without bypassing method pacing', async () => {
+    vi.stubEnv('ENS_RPC_BATCH_SIZE', '1'); vi.stubEnv('ENS_RPC_READ_INTERVAL_MS', '100');
+    const sizes: number[] = [], starts: number[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const body = JSON.parse(await (input as Request).text()); sizes.push(body.length); starts.push(Date.now());
+      return Response.json(body.map((call: { id: number; method: string }) => ({ jsonrpc: '2.0', id: call.id, result: call.method === 'eth_chainId' ? '0xaa36a7' : '0x64' })));
+    });
+    const client = createPublicClient({ transport: createEnsReadTransport('https://ens.test/low-burst', { fetcher: fetcher as typeof fetch }) });
+    expect(await Promise.all([client.getChainId(), client.getBlockNumber()])).toEqual([11155111, 100n]);
+    expect(sizes).toEqual([1, 1]); expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(90);
+  });
+  it.each([['ENS_RPC_READ_INTERVAL_MS', '0'], ['ENS_RPC_READ_INTERVAL_MS', 'Infinity'], ['ENS_RPC_BATCH_SIZE', '5']])('rejects invalid %s configuration', (key, value) => {
+    vi.stubEnv(key, value); expect(() => createEnsReadTransport('https://ens.test/config')).toThrow('ens_rpc_read_pacing_invalid');
+  });
   it("paces by RPC method count and never admits a transaction submission", async () => {
     const starts: number[] = [];
     const fetcher = vi.fn(async () => { starts.push(Date.now()); return new Response("{}"); });

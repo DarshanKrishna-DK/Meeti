@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileText, RefreshCw, Sparkles } from 'lucide-react';
+import { FileText, NotebookPen, RefreshCw } from 'lucide-react';
 import type { Profile } from '@/packages/shared/src';
 import type { ProfileIntakeResult } from '@/packages/agents/src';
 import { api, Button, Checkline, Field, Tag, type Shared } from './workspace-features';
@@ -44,7 +44,7 @@ function OwnerProfileIntake({ state, run, busy, onApply, draftConflict }: Props)
   }
 
   return <section className={`panel form-panel ${styles.library}`} aria-label="Private profile intake">
-    <div className="panel-title"><h2><Sparkles size={19} /> Put your context into words</h2><Button kind="secondary" disabled={busy || pending} onClick={() => void perform(refresh)}><RefreshCw size={14} />Refresh drafts</Button></div>
+    <div className="panel-title"><h2><NotebookPen size={19} /> Put your context into words</h2><Button kind="secondary" disabled={busy || pending} onClick={() => void perform(refresh)}><RefreshCw size={14} />Refresh drafts</Button></div>
     <p>Describe what you do, what you offer, and who you would like to meet. Your agent can ask a few focused questions and suggest a private profile draft for your review.</p>
     {error && <p role="alert" className={styles.error}>{error}</p>}
     <form onSubmit={event => { event.preventDefault(); if (!consent || !text.trim()) return; void perform(async () => {

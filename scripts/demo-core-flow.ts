@@ -1,9 +1,10 @@
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { privateKeyToAccount } from 'viem/accounts';
 import { parseSiweMessage } from 'viem/siwe';
-import { decrypt, encrypt, hash } from '../packages/server/crypto';
+import { decrypt, encrypt, hash, sign } from '../packages/server/crypto';
 import type { AppState, Candidate, ContextDocument, Intent } from '../packages/shared/src';
 import type { IntentSemantics } from '../packages/matching/src/semantics';
 import type { InferenceReceipt } from '../packages/agents/src';
@@ -16,7 +17,7 @@ import { db as privateStore, closeStore } from '../packages/server/store';
 // chain transactions, publishes records, inserts database rows, or bypasses World.
 type Label = 'demo-seeker' | 'demo-recruiter';
 type Case = 'job' | 'collaboration';
-type Mode = 'reauthenticate' | 'poll-task' | 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'retry' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
+type Mode = 'reconcile-terminal-task' | 'reauthenticate' | 'poll-task' | 'setup' | 'prepare-publications' | 'discover' | 'qualify' | 'answer' | 'resume' | 'retry' | 'consent' | 'meeting' | 'meeting-plan' | 'inspect';
 type Vault = { version: 1; wallets: { label: string; privateKey: `0x${string}` }[] };
 type Prepared = { inputHash: string; interpretation: { output: { goal: Intent['goal']; summary: string; tags: string[]; semantics: IntentSemantics }; inference: InferenceReceipt }; intentId?: string; publicPreview?: PublicIntent };
 type Discovery = { candidates: Candidate[]; source: 'arkiv'; mode: 'semantic'; embeddingExecution: string; coverage: unknown; observedBlocks: string[] };
@@ -24,7 +25,7 @@ type Qualification = { id: string; version: number; state: string; otherEns: str
 type Progress = { version: 1; origin: string; sessions: Partial<Record<Label, string>>; accounts: Partial<Record<Label, string>>;
   prepared: Partial<Record<`${Case}:${Label}`, Prepared>>; discovery: Partial<Record<`${Case}:${Label}`, Discovery>>;
   qualifications: Partial<Record<Case, { qualificationId: string; id: string | null }>>; pending?: { step: string; startedAt: string; origin?: string; taskId?: string; label?: Label; case?: Case };
-  hostedAuth?: Record<string, DemoAuthBinding>; taskHistory?: { taskId: string; step: string; origin: string; status: string }[];
+  hostedAuth?: Record<string, DemoAuthBinding>; taskHistory?: { taskId: string; step: string; origin: string; status: string; startedAt?: string; label?: Label; case?: Case; reconciledAt?: string; targetOrigin?: string }[];
   answerReceipts?: Record<string, { inputDigest: string; recordedAt: string }>; meetingGateEvidence?: { proposalId: string; version: number; code: 'WORLD_PAUSED'; checkedAt: string } };
 type MeetingView = Awaited<ReturnType<typeof import('../packages/server/meetings').meetingDto>>;
 const labelSchema = z.enum(['demo-seeker', 'demo-recruiter']);
@@ -60,6 +61,52 @@ function save() {
   writeFileSync(temporary, encrypt(progress, stateContext), { mode: 0o600 }); renameSync(temporary, statePath);
 }
 function summary(value: unknown) { console.log(JSON.stringify(value, null, 2)); }
+type TerminalTaskLookup = (input: { taskId: string; userId: string; seekerId: string; recruiterId: string }) => Promise<Record<string, unknown> | undefined>;
+/** Read-only database reconciliation. HTTP task reads can schedule work and are deliberately unreachable here. */
+export async function reconcileTerminalTaskPointer(saved: Progress, options: {
+  origin: string; explicitTarget: boolean; environment: { DATABASE_PROVIDER?: string; SUPABASE_DATABASE_URL?: string }; lookup?: TerminalTaskLookup;
+}) {
+  if (!options.explicitTarget || options.environment.DATABASE_PROVIDER !== 'postgres' || !options.environment.SUPABASE_DATABASE_URL) throw new DemoError('TERMINAL_TASK_REQUIRES_EXPLICIT_POSTGRES_TARGET');
+  const target = demoTarget({ APP_ORIGIN: options.origin, DEMO_AUTH_TARGET_ORIGIN: options.origin }).origin;
+  const pending = z.object({ taskId: z.string().uuid(), label: labelSchema, case: z.enum(['job', 'collaboration']), origin: z.string(), step: z.string().min(1).max(200), startedAt: z.string().datetime() }).passthrough().safeParse(saved.pending);
+  if (!pending.success) throw new DemoError('EXISTING_ORIGIN_BOUND_TASK_POINTER_REQUIRED');
+  let source: string;
+  try { source = demoTarget({ APP_ORIGIN: pending.data.origin, DEMO_AUTH_TARGET_ORIGIN: pending.data.origin }).origin; }
+  catch { throw new DemoError('TERMINAL_TASK_SOURCE_ORIGIN_INVALID'); }
+  if (source !== pending.data.origin) throw new DemoError('TERMINAL_TASK_SOURCE_ORIGIN_INVALID');
+  const accounts = z.object({ 'demo-seeker': z.string().uuid(), 'demo-recruiter': z.string().uuid() }).strict().safeParse(saved.accounts);
+  const binding = saved.hostedAuth?.[target];
+  if (!accounts.success || accounts.data['demo-seeker'] === accounts.data['demo-recruiter'] || !binding
+    || labels.some(label => binding.accounts[label] !== accounts.data[label] || !/^0x[a-f0-9]{40}$/i.test(binding.wallets[label] || ''))
+    || binding.wallets['demo-seeker'].toLowerCase() === binding.wallets['demo-recruiter'].toLowerCase()) throw new DemoError('EXISTING_TARGET_ACCOUNT_BINDING_REQUIRED');
+  if (source !== saved.origin) {
+    const sourceBinding = saved.hostedAuth?.[source];
+    if (!sourceBinding || labels.some(label => sourceBinding.accounts[label] !== accounts.data[label]
+      || sourceBinding.wallets[label]?.toLowerCase() !== binding.wallets[label].toLowerCase())) throw new DemoError('EXISTING_SOURCE_ACCOUNT_BINDING_REQUIRED');
+  }
+  const ownerId = accounts.data[pending.data.label];
+  const lookup: TerminalTaskLookup = options.lookup || (async input => privateStore().prepare('SELECT agent_tasks.id,agent_tasks.user_id,agent_tasks.kind,agent_tasks.status,agent_tasks.input_digest,agent_tasks.data,owner.wallet AS owner_wallet,seeker.id AS seeker_id,seeker.wallet AS seeker_wallet,recruiter.id AS recruiter_id,recruiter.wallet AS recruiter_wallet FROM agent_tasks JOIN users AS owner ON owner.id=agent_tasks.user_id JOIN users AS seeker ON seeker.id=? JOIN users AS recruiter ON recruiter.id=? WHERE agent_tasks.id=? AND agent_tasks.user_id=?')
+    .get(input.seekerId, input.recruiterId, input.taskId, input.userId));
+  let row: Record<string, unknown> | undefined;
+  try { row = await lookup({ taskId: pending.data.taskId, userId: ownerId, seekerId: accounts.data['demo-seeker'], recruiterId: accounts.data['demo-recruiter'] }); }
+  catch { throw new DemoError('TERMINAL_TASK_DATABASE_READ_FAILED'); }
+  if (!row || row.id !== pending.data.taskId || row.user_id !== ownerId || row.seeker_id !== accounts.data['demo-seeker'] || row.recruiter_id !== accounts.data['demo-recruiter']
+    || String(row.owner_wallet).toLowerCase() !== binding.wallets[pending.data.label].toLowerCase()
+    || String(row.seeker_wallet).toLowerCase() !== binding.wallets['demo-seeker'].toLowerCase() || String(row.recruiter_wallet).toLowerCase() !== binding.wallets['demo-recruiter'].toLowerCase()) throw new DemoError('TERMINAL_TASK_ACCOUNT_OWNERSHIP_MISMATCH');
+  if (!['failed', 'interrupted', 'expired'].includes(String(row.status))) throw new DemoError('TERMINAL_TASK_STATUS_NOT_RECONCILABLE');
+  try {
+    const payload = z.object({ version: z.literal(1), kind: z.enum(['propose', 'resume', 'retry']), input: z.unknown(), wallet: z.string(), sessionHash: z.string().regex(/^[a-f0-9]{64}$/) }).passthrough().parse(decrypt(row.data as string, `agent-task:${ownerId}:${pending.data.taskId}`));
+    const input = payload.kind === 'propose' ? z.object({ intentId: z.string().uuid().transform(value => value.toLowerCase()), candidateKey: z.string().regex(/^0x[a-f0-9]{64}$/i).transform(value => value.toLowerCase()) }).strict().parse(payload.input)
+      : z.object({ qualificationId: z.string().uuid().transform(value => value.toLowerCase()), version: z.number().int().positive() }).strict().parse(payload.input);
+    const expectedStep = payload.kind === 'propose' ? `qualify:${pending.data.case}:${'candidateKey' in input ? input.candidateKey : ''}`
+      : `${payload.kind}:${'qualificationId' in input ? input.qualificationId : ''}:${'version' in input ? input.version : ''}`;
+    if (row.kind !== payload.kind || payload.wallet.toLowerCase() !== binding.wallets[pending.data.label].toLowerCase()
+      || row.input_digest !== sign(JSON.stringify({ userId: ownerId, kind: payload.kind, input })) || pending.data.step.toLowerCase() !== expectedStep.toLowerCase()) throw new Error('terminal_binding');
+  } catch { throw new DemoError('TERMINAL_TASK_AUTHENTICATED_PAYLOAD_MISMATCH'); }
+  const archived = { ...pending.data, origin: source, status: String(row.status), targetOrigin: target, reconciledAt: new Date().toISOString() };
+  const updated: Progress = { ...saved, taskHistory: [...(saved.taskHistory || []), archived] }; delete updated.pending;
+  return { progress: updated, receipt: { taskId: archived.taskId, sourceOrigin: source, targetOrigin: target, status: archived.status, databaseReadOnly: true, newActionEnqueued: false } };
+}
 async function call<T>(label: Label, path: string, body?: unknown, timeoutMs = requestTimeoutMs): Promise<{ data: T; response: Response }> {
   if (!/^[a-zA-Z0-9_/-]+$/.test(path) || path.includes('..')) throw new DemoError('UNSAFE_API_PATH');
   const session = explicitTarget ? progress.hostedAuth?.[origin]?.sessions[label] : progress.sessions[label];
@@ -373,17 +420,22 @@ async function inspect() {
   }
   summary({ checkedAt: new Date().toISOString(), fictional: true, humanVerified: false, scope: 'Actual local HTTP accounts, configured live integrations only when successful. No human/device acceptance is implied.', pending: progress.pending || null, accounts: views });
 }
+async function main() {
 try {
   const target = demoTarget({ APP_ORIGIN: process.env.APP_ORIGIN, DEMO_AUTH_TARGET_ORIGIN: process.env.DEMO_AUTH_TARGET_ORIGIN }); origin = target.origin; explicitTarget = target.explicit;
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000 || requestTimeoutMs > 600000) throw new DemoError('DEMO_HTTP_TIMEOUT_MUST_BE_BOUNDED_AT_TEN_MINUTES');
-  if (!['reauthenticate', 'poll-task', 'setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'retry', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
+  if (!['reconcile-terminal-task', 'reauthenticate', 'poll-task', 'setup', 'prepare-publications', 'discover', 'qualify', 'answer', 'resume', 'retry', 'consent', 'meeting', 'meeting-plan', 'inspect'].includes(mode) || !['job', 'collaboration'].includes(selectedCase)) throw new DemoError('INVALID_MODE_OR_CASE');
   if (mode === 'reauthenticate' && (!explicitTarget || process.argv.length !== 3 || process.env.DATABASE_PROVIDER !== 'postgres' || !process.env.SUPABASE_DATABASE_URL)) throw new DemoError('REAUTHENTICATION_REQUIRES_EXPLICIT_POSTGRES_TARGET_WITHOUT_OTHER_ACTION_FLAGS');
+  if (mode === 'reconcile-terminal-task' && (!explicitTarget || process.argv.length !== 3 || process.env.DATABASE_PROVIDER !== 'postgres' || !process.env.SUPABASE_DATABASE_URL)) throw new DemoError('TERMINAL_TASK_REQUIRES_EXPLICIT_POSTGRES_TARGET_WITHOUT_OTHER_ACTION_FLAGS');
   mkdirSync('.local-data', { recursive: true });
   try { const lock = openSync('.local-data/demo-core-flow.lock', 'wx', 0o600); lockOwned = true; closeSync(lock); }
   catch { throw new DemoError('ANOTHER_DRIVER_OR_STALE_LOCK_REQUIRES_INSPECTION'); }
   progress = existsSync(statePath) ? decrypt<Progress>(readFileSync(statePath, 'utf8'), stateContext) : { version: 1, origin, sessions: {}, accounts: {}, prepared: {}, discovery: {}, qualifications: {} };
   if (progress.version !== 1 || !explicitTarget && progress.origin !== origin) throw new DemoError('ENCRYPTED_PROGRESS_ORIGIN_MISMATCH');
-  if (mode === 'reauthenticate') {
+  if (mode === 'reconcile-terminal-task') {
+    const reconciled = await reconcileTerminalTaskPointer(progress, { origin, explicitTarget, environment: { DATABASE_PROVIDER: process.env.DATABASE_PROVIDER, SUPABASE_DATABASE_URL: process.env.SUPABASE_DATABASE_URL } });
+    progress = reconciled.progress; save(); summary({ completed: true, mode, ...reconciled.receipt });
+  } else if (mode === 'reauthenticate') {
     const vault = decrypt<Vault>(readFileSync('.local-data/demo-wallets.enc', 'utf8'), 'meeti-demo-wallets-v1');
     if (vault.version !== 1) throw new DemoError('UNEXPECTED_DEMO_VAULT');
     const binding = await reauthenticateDemoAccounts({ origin, expectedAccounts: progress.accounts, wallets: vault.wallets,
@@ -434,7 +486,9 @@ try {
   summary({ completed: false, mode, case: selectedCase, code: error instanceof DemoError || error instanceof DemoAuthError ? error.code : 'DEMO_DRIVER_FAILED',
     note: 'No success is assumed. Inspect encrypted progress before retrying an uncertain provider operation. World remains paused.' }); process.exitCode = 1;
 } finally {
-  try { if (mode === 'reauthenticate') await closeStore(); }
+  try { if (mode === 'reauthenticate' || mode === 'reconcile-terminal-task') await closeStore(); }
   catch { summary({ completed: false, code: 'AUTH_CONNECTION_CLEANUP_FAILED' }); process.exitCode = 1; }
   finally { if (lockOwned) rmSync('.local-data/demo-core-flow.lock'); }
 }
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();

@@ -53,3 +53,7 @@ npm run arkiv:query -- collaborator
 ```
 
 Actual application discovery found the DevRel seek/hire pair in both directions despite zero exact tag overlap. Local `nomic-embed-text:v1.5` produced 768-dimensional vectors and cosine 0.8924824531220792. The first comparison used one real 52-token embedding request; the reciprocal comparison reused two cached vectors after fresh Arkiv and ENS checks. This is semantic relevance, not a compatibility probability or introduction consent. Unconfirmed soft preferences remained visible. Candidate coverage was explicitly non-exhaustive, capped at twelve. All accounts are fictional and are not World verified.
+
+### Free CPU deployment model verification
+
+On 7 November, the production build in Vercel mode used the migrated Supabase accounts and queried actual Rabdi blocks 311769 and 311798. Both DevRel directions returned their separately owned records after live ENS checks. The pinned `Xenova/all-MiniLM-L6-v2` CPU model produced 384-dimensional vectors and cosine `0.6872726960500519`. One real embedding batch processed 46 tokens at no provider charge; the reciprocal result reused the two vectors while re-reading current chain state. Both recommendations remained `possible-match` with unresolved preferences. Coverage was capped at twelve; other candidates with failed authority checks were reported unconfirmed. This was an actual local production-server pipeline, not yet a hosted-origin acceptance claim. It used the same existing public entities and made no new blockchain publication.

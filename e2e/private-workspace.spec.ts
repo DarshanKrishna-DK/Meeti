@@ -63,7 +63,7 @@ test('rejects an injected non-MetaMask wallet before issuing a sign-in challenge
   expect(challenges).toEqual([]);
 });
 
-test('persists tour skip for its owner, permits replay and completes guided setup using private defaults', async ({ page, context, baseURL }) => {
+test('persists tour skip for its owner, permits replay and saves a private profile before pending name setup', async ({ page, context, baseURL }) => {
   await installTestMetaMask(context);
   await signInWithTestWallet(page);
   await dismissTour(page);
@@ -108,11 +108,10 @@ test('persists tour skip for its owner, permits replay and completes guided setu
     await expect(setup.getByRole('button', { name: 'Close dialog', exact: true })).toBeDisabled();
     await expect(setup.getByRole('button', { name: 'Saving your profile...', exact: true })).toBeDisabled();
     release();
-    await expect(setup.getByRole('link', { name: 'Open ENS agent setup', exact: true })).toBeVisible();
-    await setup.getByRole('button', { name: 'See the next step', exact: true }).click();
-    await expect(setup.getByRole('link', { name: 'Create your first intent', exact: true })).toBeVisible();
-    await expect(setup).toContainText('World human verification is future scope. Protected introductions remain locked');
-    await setup.getByRole('button', { name: 'Finish guide', exact: true }).click();
+    await expect(setup.getByRole('button', { name: 'Request this name', exact: true })).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Continue to agent setup', exact: true })).toBeDisabled();
+    await expect(setup.getByRole('button', { name: 'Use this name', exact: true })).toHaveCount(0);
+    await setup.getByRole('button', { name: 'Close dialog', exact: true }).click();
     const stored = await current(context, baseURL!);
     expect(stored.profile).toMatchObject({ displayName: 'Signed browser owner', seeking: 'A thoughtful collaborator', offering: 'TypeScript and patient design review', publicFields: [], aiConsent: false, contact: '', employer: '' });
     expect(stored.agent).toBeNull();
@@ -121,7 +120,7 @@ test('persists tour skip for its owner, permits replay and completes guided setu
     expect((await progress.json()).data).toMatchObject({ profileComplete: true, tourCompleted: true, hasAgent: false, hasIntent: false });
     expect(mutations).toEqual(['/api/profile']);
     await page.reload();
-    await expect(page.getByRole('button', { name: 'Continue guided setup', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Choose your Meeti name', exact: true })).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
   } finally {
     release();
@@ -174,7 +173,7 @@ test('preserves a guided setup draft and requires review when the actual saved p
   const refreshed = page.waitForResponse(response => response.url().endsWith('/api/state') && response.request().method() === 'GET');
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   expect((await refreshed).status()).toBe(200);
-  await expect(setup.getByRole('status')).toContainText('A saved profile changed while this setup was open.');
+  await expect(setup.locator('.draft-warning')).toContainText('A saved profile changed while this setup was open.');
   await expect(setup.getByLabel('What should we call you?', { exact: true })).toHaveValue('Local guided draft');
   await setup.getByRole('button', { name: 'Continue', exact: true }).click();
   await setup.getByLabel('What you are looking for', { exact: true }).fill('Local draft seeks a collaborator');
@@ -185,7 +184,7 @@ test('preserves a guided setup draft and requires review when the actual saved p
   await expect(setup.getByRole('button', { name: 'Save private profile', exact: true })).toBeDisabled();
   expect((await current(context, baseURL!)).profile.displayName).toBe('Saved outside this guided draft');
   await setup.getByRole('button', { name: 'Load current saved profile', exact: true }).click();
-  await expect(setup.getByRole('status')).toHaveCount(0);
+  await expect(setup.locator('.draft-warning')).toHaveCount(0);
   await expect(setup.getByRole('button', { name: 'Save private profile', exact: true })).toBeEnabled();
   for (let step = 0; step < 4; step += 1) await setup.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(setup.getByLabel('What should we call you?', { exact: true })).toHaveValue('Saved outside this guided draft');

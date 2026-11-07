@@ -8,6 +8,8 @@
 
 **Your agent explores. You choose who gets to meet you.**
 
+[Open Meeti](https://meeti-theta.vercel.app) | Hosted acceptance testing in progress
+
 ![Next.js](https://img.shields.io/badge/Next.js-16-342432?style=for-the-badge&logo=nextdotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-79445D?style=for-the-badge&logo=typescript&logoColor=white)
 ![ENSv2](https://img.shields.io/badge/ENSv2-Sepolia-79596C?style=for-the-badge)
@@ -294,8 +296,16 @@ In Agent Studio, find **Use my existing agent identity**, enter the complete age
 
 #### Do new users need to pay for ENS?
 
-Agent Studio also offers **Open name request** under the configured Sepolia project parent. Set `ENS_PROJECT_PARENT` and the actual owner wallet as `ENS_PROJECT_ISSUER`. A user explicitly approves the public name-to-wallet association before reserving a normalized label. The issuer reviews branch setup and each issuance transaction using its own wallet. Submitted transactions remain pending until confirmed receipts and current registry read-back agree. The `users.meeti-demo.eth` branch and two fictional user namespaces are now confirmed on Sepolia, with separate `networking` agent children and dedicated resolvers. New recipients still require their own reviewed issuance and permission setup; existing test receipts do not authorize arbitrary new names.
+Agent Studio shows **Your Meeti name** under the configured Sepolia project parent. The status card distinguishes a saved request, a prepared review and a confirmed registration. After confirmation, select **Use this name** to fill the exact agent name and move focus to its settings. Saving those settings is separate from verifying ENS permissions. Set `ENS_PROJECT_PARENT` and the actual owner wallet as `ENS_PROJECT_ISSUER`. A user explicitly approves the public name-to-wallet association before reserving a normalized label. The issuer reviews branch setup and each issuance transaction using its own wallet. Submitted transactions remain pending until confirmed receipts and current registry read-back agree. The `users.meeti-demo.eth` branch and two fictional user namespaces are now confirmed on Sepolia, with separate `networking` agent children and dedicated resolvers. New recipients still require their own reviewed issuance and permission setup; existing test receipts do not authorize arbitrary new names.
 
+For a new name, follow this sequence:
+
+1. Select **Request this name** after reviewing its public name and wallet association.
+2. While registration is pending, use **Check registration**. A saved request or prepared transaction is not a claimed name.
+3. After the confirmed issuance receipt appears, select **Use this name**. The exact agent name fills the settings form and receives keyboard focus.
+4. Review the separate delegate and permissions, then select **Save agent settings**.
+5. Follow **Complete agent registration and permissions**, review each required transaction, then select **Check current permissions**.
+6. The guide can preview **First intent** and can be reopened from the dashboard. It resumes from saved state; previewing the instructions does not complete setup. The dashboard keeps an unverified agent on permission setup, and each protected action performs its own live checks.
 The recipient-only child registry removes issuer roles at that child level. The ancestor owner retains its documented ancestor powers. This is not a fully trustless parent. Each test agent now has a distinct delegate with only the status-record setter grant and no ancestor roles. Meeti rejects an ancestor issuer reused as an agent delegate. The application does not request a user's private key or provide automatic recipient-gas sponsorship. Separately authorized local test executors use encrypted generated-wallet vaults and bounded funding approvals; they are not a hosted relayer. A zero registration fee does not remove test gas, parent renewal or hosting requirements.
 
 A name is not needed to sign in or save a private profile. Agent discovery and publication need genuine ENSv2 authorization. The current demo uses Sepolia, where registration uses freely minted mock test USDC and test ETH for gas. Mainnet names involve real registration, renewal and network fees. An existing mainnet name does not automatically establish ownership of the same Sepolia name. Use the official tutorial linked above for registration and inspect every transaction.
@@ -457,7 +467,7 @@ An earlier live bounded qualification check completed genuine Arkiv reads, six c
 
 The selected free hosting architecture is **Vercel Hobby with Node 24 functions, Supabase Postgres and private Storage**. Render was not created because its free-service registration required card verification. The optional Docker/Render configuration is preserved, but it is not the active deployment path.
 
-The private Postgres adapter and genuine wallet sign-in passed live two-account verification, including replay denial, private profile writes, pool reconnect, tenant separation and transaction rollback. The existing Meeti project is in Merci, Mumbai, on the approved free plan. The hosted application still requires its own acceptance check.
+The private Postgres adapter and genuine wallet sign-in passed live two-account verification, including replay denial, private profile writes, pool reconnect, tenant separation and transaction rollback. The existing Meeti project is in Merci, Mumbai, on the approved free plan. The public homepage and API health endpoint passed HTTP 200 checks at https://meeti-theta.vercel.app. Hosted nonce-bound sign-in now recovers both distinct fictional accounts. Actual headless browser checks passed for private profiles, file ownership and anonymous/cross-account denial, intent receipts and truthful blocked-conversation states. Live hosted qualification remains in progress; these checks did not invoke a model or sign a chain transaction.
 
 1. For a **new, empty database**, apply `migrations/postgres/001_meeti.sql` as a database administrator in the Supabase SQL editor. Do not rerun this bootstrap over an existing installation. The current Meeti project already has all 31 private tables.
 2. Give the dedicated `meeti_runtime` role a strong generated login password through an authorized administrator. Do not use the database administrator password in the application, paste credentials into chat, or commit them.

@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { chromium, expect, request as playwrightRequest, type APIRequestContext, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { decrypt } from '../packages/server/crypto';
 import type { AppState, ContextDocument } from '../packages/shared/src';
+import { DemoAuthError, demoTarget, type DemoAuthBinding } from './demo-auth-only';
 
 // Actual demo sessions are read, never created or refreshed here. This driver does not
 // sign, inject a wallet, click controls, run models, or manufacture chain authority.
 type Label = 'demo-seeker' | 'demo-recruiter';
-type Saved = { version: 1; origin: string; sessions: Partial<Record<Label, string>>; accounts: Partial<Record<Label, string>> };
+type Saved = { version: 1; origin: string; sessions: Partial<Record<Label, string>>; accounts: Partial<Record<Label, string>>; hostedAuth?: Record<string, DemoAuthBinding> };
 type Qualification = { id: string; version: number; state: string; otherEns: string; proposalId: string | null;
   messages: { id: string; content: string; createdAt: string }[] };
 type AccountReport = { label: Label; userId?: string; agentEns?: string; checks: string[]; intentStates?: Record<string, number>; conversationStates?: Record<string, number>;
@@ -16,12 +18,32 @@ type AccountReport = { label: Label; userId?: string; agentEns?: string; checks:
   pageDiagnostics?: { pathname: string; expectedIntents: number; allSavedIntentCards: number; intentionLibraryCards: number; schedulerCards: number; alertCount: number; applicationErrorVisible: boolean };
   screenshots: string[] };
 class ReadbackError extends Error { constructor(readonly code: string) { super(code); } }
-const origin = new URL(process.env.APP_ORIGIN || 'http://127.0.0.1:3173').origin;
+let origin = '';
 const labels: Label[] = ['demo-seeker', 'demo-recruiter'];
 const safeApiPaths = new Set(['/api/health', '/api/state', '/api/onboarding', '/api/qualifications', '/api/context/files', '/api/profile/intakes', '/api/discovery/jobs']);
 const outputDirectory = `.local-data/private-artifacts/demo-browser-${new Date().toISOString().replace(/[^0-9TZ]/g, '')}`;
 const reports: AccountReport[] = [], blockedRequests: { label: Label; method: string; path: string; reason: string }[] = [];
 let browser: Browser | undefined;
+/** Never transfer a local session to another destination. Existing origin-specific authentication is required. */
+export function selectReadbackSessions(saved: Saved, environment: { APP_ORIGIN?: string; DEMO_AUTH_TARGET_ORIGIN?: string }) {
+  const target = demoTarget(environment);
+  if (saved.version !== 1 || !saved.accounts['demo-seeker'] || !saved.accounts['demo-recruiter'] || saved.accounts['demo-seeker'] === saved.accounts['demo-recruiter']) throw new ReadbackError('TWO_DISTINCT_SAVED_DEMO_ACCOUNTS_REQUIRED');
+  let sessions = saved.sessions, wallets: Partial<Record<Label, string>> | undefined;
+  if (target.explicit) {
+    const binding = saved.hostedAuth?.[target.origin];
+    if (!binding || labels.some(label => binding.accounts[label] !== saved.accounts[label])) throw new ReadbackError('EXACT_TARGET_AUTHENTICATION_REQUIRED');
+    sessions = binding.sessions; wallets = binding.wallets;
+    if (labels.some(label => !/^0x[0-9a-f]{40}$/i.test(wallets![label] || '')) || wallets['demo-seeker']!.toLowerCase() === wallets['demo-recruiter']!.toLowerCase()) throw new ReadbackError('TWO_DISTINCT_BOUND_WALLETS_REQUIRED');
+  } else if (!target.local || saved.origin !== target.origin) throw new ReadbackError('SAVED_SESSION_ORIGIN_MISMATCH');
+  if (labels.some(label => !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(saved.accounts[label]!) || !/^meeti_session=[0-9a-f]{64}$/.test(sessions[label] || ''))) throw new ReadbackError('SAVED_OPAQUE_SESSION_REQUIRED_NO_AUTHENTICATION_PERFORMED');
+  return { origin: target.origin, sessions, accounts: saved.accounts, wallets, secure: new URL(target.origin).protocol === 'https:', explicit: target.explicit };
+}
+export function readbackRequestReason(expectedOrigin: string, urlValue: string, method: string) {
+  let url: URL;
+  try { url = new URL(urlValue); } catch { return 'invalid-request-url'; }
+  return !['GET', 'HEAD'].includes(method) ? 'mutation-blocked' : url.origin !== expectedOrigin ? 'external-request-blocked'
+    : url.pathname.startsWith('/api/') && !safeApiPaths.has(url.pathname) ? 'provider-or-unsafe-read-blocked' : '';
+}
 async function check(code: string, action: () => Promise<unknown>) { try { await action(); } catch { throw new ReadbackError(code); } }
 async function get<T>(context: BrowserContext, path: string): Promise<T> {
   if (!safeApiPaths.has(`/api/${path}`)) throw new ReadbackError('UNSAFE_READ_PATH');
@@ -151,7 +173,7 @@ async function approvalsReadback(page: Page, state: AppState, report: AccountRep
     const proposal = state.proposals[index], card = cards.nth(index);
     await check('PROPOSAL_COUNTERPART_DIFFERS_FROM_HTTP', () => expect(card.getByRole('heading', { level: 2, includeHidden: true })).toHaveText(proposal.candidateName || proposal.candidateEns));
     await check('PROPOSAL_SUMMARY_DIFFERS_FROM_HTTP', () => expect(card.getByText(proposal.summary, { exact: true })).toHaveCount(1));
-    await check('WORLD_PAUSED_BADGE_NOT_RENDERED', () => expect(card.locator('.approval-gates').getByText('Paused', { exact: true })).toHaveCount(1));
+    await check('WORLD_PAUSED_BADGE_NOT_RENDERED', () => expect(card.locator('.approval-gates').getByText('Future scope', { exact: true })).toHaveCount(1));
     await check('PROTECTED_ROOM_BUTTON_NOT_LOCKED', () => expect(card.getByRole('button', { name: 'Check gates and open room', exact: true, includeHidden: true })).toBeDisabled());
   }
   report.actualProposals = state.proposals.length;
@@ -160,30 +182,31 @@ async function approvalsReadback(page: Page, state: AppState, report: AccountRep
     : 'No proposals exist. World status remains deferred; there is no proposal release control to test.');
   await capture(page, report, 'approvals');
 }
+export async function runReadback() {
 try {
-  if (new URL(origin).protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(new URL(origin).hostname)) throw new ReadbackError('LOCAL_HTTP_ORIGIN_REQUIRED');
   if (!existsSync('.local-data/demo-core-flow.enc')) throw new ReadbackError('RUN_ACTUAL_DEMO_ACCOUNT_SETUP_FIRST');
   const saved = decrypt<Saved>(readFileSync('.local-data/demo-core-flow.enc', 'utf8'), 'meeti-demo-core-flow-v1');
-  if (saved.version !== 1 || saved.origin !== origin || !saved.accounts['demo-seeker'] || saved.accounts['demo-seeker'] === saved.accounts['demo-recruiter']) throw new ReadbackError('TWO_DISTINCT_SAVED_DEMO_ACCOUNTS_REQUIRED');
+  const binding = selectReadbackSessions(saved, { APP_ORIGIN: process.env.APP_ORIGIN, DEMO_AUTH_TARGET_ORIGIN: process.env.DEMO_AUTH_TARGET_ORIGIN });
+  origin = binding.origin;
   mkdirSync(outputDirectory, { recursive: true });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   const contexts: BrowserContext[] = [], snapshots: AppState[] = [], files: ContextDocument[][] = [];
   const anonymous = await playwrightRequest.newContext({ storageState: { cookies: [], origins: [] } });
   try {
     for (const label of labels) {
-      const session = saved.sessions[label], match = session && /^meeti_session=([0-9a-f]{64})$/.exec(session);
+      const session = binding.sessions[label], match = session && /^meeti_session=([0-9a-f]{64})$/.exec(session);
       if (!match) throw new ReadbackError('SAVED_OPAQUE_SESSION_REQUIRED_NO_AUTHENTICATION_PERFORMED');
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' }); contexts.push(context);
-      await context.addCookies([{ name: 'meeti_session', value: match[1], url: origin, httpOnly: true, secure: false, sameSite: 'Strict' }]);
+      await context.addCookies([{ name: 'meeti_session', value: match[1], url: origin, httpOnly: true, secure: binding.secure, sameSite: 'Strict' }]);
       await context.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url());
-        const reason = !['GET', 'HEAD'].includes(request.method()) ? 'mutation-blocked' : url.origin !== origin ? 'external-request-blocked'
-          : url.pathname.startsWith('/api/') && !safeApiPaths.has(url.pathname) ? 'provider-or-unsafe-read-blocked' : '';
+        const reason = readbackRequestReason(origin, url.href, request.method());
         if (reason) { if (blockedRequests.length < 100) blockedRequests.push({ label, method: request.method(), path: url.origin === origin ? url.pathname : '[external]', reason }); await route.abort(); }
         else await route.continue();
       });
       const state = await get<AppState>(context, 'state');
-      if (state.user.id !== saved.accounts[label] || state.profile.displayName !== `Fictional TEST DATA ${label}`) throw new ReadbackError('ACTUAL_AUTHENTICATED_DEMO_ACCOUNT_MISMATCH');
+      if (state.user.id !== binding.accounts[label] || binding.wallets && state.user.wallet?.toLowerCase() !== binding.wallets[label]?.toLowerCase() || state.profile.displayName !== `Fictional TEST DATA ${label}`) throw new ReadbackError('ACTUAL_AUTHENTICATED_DEMO_ACCOUNT_MISMATCH');
+      if ((state.agentTasks || []).some(task => task.status === 'queued' || task.status === 'running')) throw new ReadbackError('ACTIVE_AGENT_TASKS_REQUIRE_SEPARATE_NON_READONLY_TEST');
       snapshots.push(state);
       files.push(await get<ContextDocument[]>(context, 'context/files'));
     }
@@ -205,14 +228,16 @@ try {
     }
   } finally { await anonymous.dispose(); for (const context of contexts) await context.close(); }
   if (blockedRequests.some(request => request.reason !== 'external-request-blocked')) throw new ReadbackError('UI_ATTEMPTED_MUTATION_OR_PROVIDER_READ_DURING_READONLY_INSPECTION');
-  const report = { checkedAt: new Date().toISOString(), passed: true, actualBrowser: 'Installed Chrome, headless, separate ephemeral contexts',
+  const report = { checkedAt: new Date().toISOString(), passed: true, origin, actualBrowser: 'Installed Chrome, headless, separate ephemeral contexts',
     scope: 'Rendered actual HTTP data using existing authenticated demo sessions. No mocked authorities or injected wallets. No AI/chain calls or mutating buttons requested by this driver.',
     independentHumanOrDeviceAcceptance: false, conversationsOrMatchesAssumed: false,
     tourNote: 'First-user tour dialogs are preserved and reported. Underlying DOM comparisons do not dismiss the tour or change its preference. Screenshots retain any visible tour.',
     storageNote: 'Protected original integrity is verified through actual HTTP. This driver does not inspect server storage pointers; attribute cloud storage using separate server SDK evidence.', accounts: reports, blockedRequests };
   writeFileSync(`${outputDirectory}/readback.json`, JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));
 } catch (error) {
-  const report = { checkedAt: new Date().toISOString(), passed: false, code: error instanceof ReadbackError ? error.code : 'BROWSER_READBACK_FAILED',
+  const report = { checkedAt: new Date().toISOString(), passed: false, code: error instanceof ReadbackError || error instanceof DemoAuthError ? error.code : 'BROWSER_READBACK_FAILED',
     accounts: reports, blockedRequests, note: 'No result is invented. Source state may have changed during inspection. No credentials or browser exception bodies are printed.' };
   mkdirSync(outputDirectory, { recursive: true }); writeFileSync(`${outputDirectory}/readback.json`, JSON.stringify(report, null, 2)); console.error(JSON.stringify(report, null, 2)); process.exitCode = 1;
 } finally { if (browser) await browser.close(); }
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await runReadback();

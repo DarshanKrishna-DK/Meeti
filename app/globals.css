@@ -1027,6 +1027,7 @@ body { background: var(--bg); color: var(--ink); }
 .dialog-body > .icon-box { margin-bottom: 20px; }
 .dialog-body h2 { color: var(--heading); font-size: 28px; margin-bottom: 17px; }
 .dialog-body p { font-size: 13px; line-height: 1.85; }
+.setup-name { overflow-wrap: anywhere; }
 .dialog-body .field { margin-block: 20px; }
 .dialog-body .field label { font-size: 12px; }
 .dialog-body .checkline { font-size: 12px; color: var(--muted); }
@@ -1051,6 +1052,29 @@ body { background: var(--bg); color: var(--ink); }
 .tour-dialog p { font-size: 12px; }
 .tour-mascot { width: 195px; margin: -5px auto 14px; }
 .tour-mascot svg { display: block; width: 100%; }
+.mascot { display: block; width: 100%; height: auto; overflow: visible; }
+.mascot-shadow { fill: var(--heading); opacity: .14; }
+.mascot-arm, .mascot-point { fill: none; stroke: var(--accent); stroke-linecap: round; stroke-linejoin: round; }
+.mascot-arm { stroke-width: 8; }
+.mascot-point { stroke-width: 3.5; }
+.mascot-shine { fill: #fff; opacity: .55; }
+.mascot-ink { fill: var(--accent); }
+.mascot-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; }
+.field-guide { display: flex; align-items: center; gap: 12px; margin: 4px 34px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-tint); animation: guide-pop 460ms cubic-bezier(.22,.8,.3,1); }
+.field-guide .mascot { width: 78px; flex: 0 0 auto; }
+.field-guide p { margin: 0; color: var(--heading); font-size: 13px; line-height: 1.55; }
+.guide-target { position: relative; z-index: 3; border-radius: 14px; box-shadow: 0 0 0 3px var(--accent); animation: guide-pulse 1.6s ease-in-out infinite; }
+.auth-illustration.is-guiding { animation: guide-pop 480ms cubic-bezier(.22,.8,.3,1); }
+.sign-in-review .field-guide { margin: 0 0 12px; }
+.workspace.tour-open .workspace-body::before { content: ""; position: absolute; inset: 0; z-index: 20; background: var(--scrim); }
+.workspace.tour-open .workspace-body { position: relative; }
+.tour-dialog[open] { position: fixed; top: 12vh; right: 28px; left: auto; margin: 0; z-index: 45; }
+@keyframes guide-pop { from { opacity: 0; transform: translateY(10px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes guide-pulse { 0%, 100% { box-shadow: 0 0 0 3px var(--accent); } 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (max-width: 767px) {
+ .tour-dialog[open] { top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; }
+ .field-guide { margin-inline: 18px; }
+}
 .tour-dots { display: flex; justify-content: center; gap: 8px; margin-top: 25px; }
 .tour-dots > span { width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
 .tour-dots > span.current { background: var(--accent); width: 18px; border-radius: 5px; }

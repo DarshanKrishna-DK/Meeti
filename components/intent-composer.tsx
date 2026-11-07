@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { ArrowRight, Check, ExternalLink, Globe2, LockKeyhole, Sparkles, Wallet, Zap } from 'lucide-react';
+import { ArrowRight, Check, ExternalLink, Globe2, LockKeyhole, PenLine, Wallet, Zap } from 'lucide-react';
 import type { Goal, Intent } from '@/packages/shared/src';
 import { requirementReviewQuestion, type IntentSemantics } from '@/packages/matching/src/semantics';
 import { normalizeTopics } from '@/packages/shared/src/topics';
@@ -91,7 +91,7 @@ export function Intents({ state, run, busy }: Shared) {
         <p>Be clear about what you need and what you can offer. Keep contacts and confidential information out of your public summary.</p>
         <Field label="Your intention, in your own words"><textarea rows={4} value={text} onChange={event => setText(event.target.value)} placeholder="I am building an open-source tool and would like help making its developer onboarding clearer." /></Field>
         <Checkline checked={disclose} onChange={setDisclose}>I approve sending this text to the configured model to structure my intent.</Checkline>
-        <Button kind="secondary" disabled={busy || !text.trim() || !disclose} onClick={() => void run(() => interpret(text, true), 'Intent structured. Review every public field below.')}><Sparkles size={16} />Help shape my intent</Button>
+        <Button kind="secondary" disabled={busy || !text.trim() || !disclose} onClick={() => void run(() => interpret(text, true), 'Intent structured. Review every public field below.')}><PenLine size={16} />Help shape my intent</Button>
 
         <form className="intent-review-form" onSubmit={event => { event.preventDefault(); void run(async () => {
           if (editingConflict) throw new Error('This intent changed in another session. Load its latest revision before saving.');
