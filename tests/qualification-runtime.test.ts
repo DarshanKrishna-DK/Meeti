@@ -290,6 +290,19 @@ describe('persisted qualification boundaries with fixture providers', () => {
         expect(transport).toHaveBeenCalledTimes(1);
         expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
     });
+    it('allows an explicit retry after a diagnosed schema repair while retaining every reserved attempt', async () => {
+        const transport = modelFixture([], 0, async call => {
+            if (call === 1) throw new AgentError('provider', 'Fixture schema rejection', { status: 400, code: 'invalid_request_error', diagnostic: { parameter: 'response_format', reason: 'schema_invalid' } });
+        });
+        await expect(start()).rejects.toMatchObject({ code: 'provider' });
+        const first = (await listQualificationDtos(left.id))[0];
+        expect(first.canRetry).toBe(true); expect(first.attemptsUsed).toBe(1); expect(transport).toHaveBeenCalledTimes(1);
+        const reserved = structuredClone((await qualificationRecord(first.id))!.value.attempts);
+        await retryQualification(left.id, first.id, { version: first.version }, () => {});
+        expect((await listQualificationDtos(left.id))[0]).toMatchObject({ state: 'proposed', attemptsUsed: 3 });
+        expect((await qualificationRecord(first.id))!.value.attempts![0]).toEqual(reserved![0]);
+        expect(transport).toHaveBeenCalledTimes(3);
+    });
     it.each([
         [400, 'json_validate_failed', true],
         [401, 'invalid_api_key', false],

@@ -141,8 +141,8 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
     ["evidence_quote", "evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.self!.quote = "Unavailable private text must never appear in diagnostics."; }],
     ["criterion_coverage", "criteria", (output: ReturnType<typeof turn>) => { output.findings[3] = { ...output.findings[0] }; }],
     ["finding_reference_schema", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[3].evidence.self!.reference = "untrusted:unavailable"; }],
-    ["finding_missing_citations", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence = citationSlots(); }],
-    ["bilateral_evidence", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.other = null; }],
+    ["finding_missing_citations", "finding_missing_citations", (output: ReturnType<typeof turn>) => { output.findings[0].evidence = citationSlots(); }],
+    ["bilateral_evidence", "bilateral_evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.other = null; }],
     ["owner_questions", "owner_questions", (output: ReturnType<typeof turn>) => { output.ownerQuestions = [{ owner: "self", criterionIds: ["shared_objective"], question: "Unavailable private question must never appear in diagnostics." }]; }],
   ] as const)("returns a fixed safe diagnostic for invalid %s without accepting the turn", async (_label, detail, mutate) => {
     const fixture = fixtureProvider(data => { const output = turn(data); mutate(output); return output; });
@@ -239,7 +239,9 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
       const properties = body.response_format.json_schema.schema.properties;
       const references = [...new Set([...data.self.evidence, ...data.other.evidence].map(evidence => evidence.reference))];
       expect(properties).not.toHaveProperty("evidence");
-      expect(properties.findings.items.anyOf).toHaveLength(3);
+      expect(properties.findings.items.type).toBe('object');
+      expect(properties.findings.items).not.toHaveProperty('anyOf');
+      expect(properties.findings.items.properties.status.enum).toEqual(['supported', 'contradicted', 'unknown']);
       function assertStrictSchema(node: unknown) {
         if (!node || typeof node !== 'object') return;
         if (Array.isArray(node)) { node.forEach(assertStrictSchema); return; }
@@ -253,25 +255,20 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
         Object.values(current).forEach(assertStrictSchema);
       }
       assertStrictSchema(body.response_format.json_schema.schema);
-      for (const branch of properties.findings.items.anyOf) {
-        expect(branch.additionalProperties).toBe(false);
-        expect(branch.properties).not.toHaveProperty("evidenceReferences");
-        expect(branch.properties.criterionId.enum).toEqual(data.rubric.map(criterion => criterion.id));
-        const slots = branch.properties.evidence;
-        expect(slots.additionalProperties).toBe(false);
-        expect(slots.required).toEqual(["self", "other", "additional"]);
-        expect(slots.properties.additional.maxItems).toBe(4);
-        expect(slots.properties.additional.items.properties.reference.enum).toEqual(references);
-        if (branch.properties.status.enum[0] === "supported") {
-          expect(slots.properties.self.properties.reference.enum).toEqual(data.self.evidence.map(item => item.reference));
-          expect(slots.properties.other.properties.reference.enum).toEqual(data.other.evidence.map(item => item.reference));
-          expect(slots.properties.self).not.toHaveProperty("anyOf");
-          expect(slots.properties.other).not.toHaveProperty("anyOf");
-        } else {
-          expect(slots.properties.self.anyOf).toContainEqual({ type: "null" });
-          expect(slots.properties.other.anyOf).toContainEqual({ type: "null" });
-        }
-      }
+      const finding = properties.findings.items;
+      expect(finding.additionalProperties).toBe(false);
+      expect([...finding.required].sort()).toEqual(['criterionId', 'evidence', 'explanation', 'status']);
+      expect(finding.properties).not.toHaveProperty("evidenceReferences");
+      expect(finding.properties.criterionId.enum).toEqual(data.rubric.map(criterion => criterion.id));
+      const slots = finding.properties.evidence;
+      expect(slots.additionalProperties).toBe(false);
+      expect(slots.required).toEqual(["self", "other", "additional"]);
+      expect(slots.properties.additional.maxItems).toBe(4);
+      expect(slots.properties.additional.items.properties.reference.enum).toEqual(references);
+      expect(slots.properties.self.anyOf[0].properties.reference.enum).toEqual(data.self.evidence.map(item => item.reference));
+      expect(slots.properties.other.anyOf[0].properties.reference.enum).toEqual(data.other.evidence.map(item => item.reference));
+      expect(slots.properties.self.anyOf).toContainEqual({ type: "null" });
+      expect(slots.properties.other.anyOf).toContainEqual({ type: "null" });
       expect(properties.ownerQuestions.items.properties.criterionIds.items.enum).toEqual(data.rubric.map(criterion => criterion.id));
       expect(data.citationContract).toMatchObject({ allowedEvidenceReferences: references,
         inlineEvidenceRequired: true, maxCitationsPerFinding: 6, maxPooledCitations: 24, nonUnknownFindingsRequireCitations: true, supportedFindingsRequireBothParticipants: true });

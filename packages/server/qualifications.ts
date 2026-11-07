@@ -132,7 +132,10 @@ function providerFailureDiagnostic(error: AgentError): string | null {
 function canRetry(value: QualificationData) {
     // Older raw provider read failures lacked a retry classification. A manual retry still
     // rechecks current state, live authority and the original durable request budget.
-    return remaining(value) && (value.retryable === true || value.failureCode === 'PROVIDER_UNAVAILABLE');
+    // A corrected provider schema can be explicitly retried without resetting the original ledger.
+    // This permits a manual request only. No automatic provider retry is scheduled here.
+    const correctedSchema = value.failureCode === 'AGENT_provider_http_400_invalid_request_error_response_format_schema_invalid';
+    return remaining(value) && (value.retryable === true || value.failureCode === 'PROVIDER_UNAVAILABLE' || correctedSchema);
 }
 async function recoverInterrupted(record: RecordValue) {
     if (record.row.state !== 'running' || (record.row.lease_until && Date.parse(record.row.lease_until) > Date.now()))

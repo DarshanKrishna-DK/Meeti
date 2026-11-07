@@ -46,12 +46,8 @@ const findingSchema = z.object({
 const generatedFindingBase = findingSchema.omit({ evidenceReferences: true, status: true });
 function generatedFindingSchema(selfCitation: z.ZodType<z.infer<typeof evidenceSchema>>, otherCitation: z.ZodType<z.infer<typeof evidenceSchema>>, additionalCitation: z.ZodType<z.infer<typeof evidenceSchema>> = evidenceSchema) {
   const slots = z.object({ self: selfCitation.nullable(), other: otherCitation.nullable(), additional: z.array(additionalCitation).max(4) }).strict();
-  // Supported findings require separate owner citations in the provider schema, not only in post-validation.
-  return z.union([
-    generatedFindingBase.extend({ status: z.enum(["supported"]), evidence: slots.extend({ self: selfCitation, other: otherCitation }).strict() }).strict(),
-    generatedFindingBase.extend({ status: z.enum(["contradicted"]), evidence: slots }).strict(),
-    generatedFindingBase.extend({ status: z.enum(["unknown"]), evidence: slots }).strict(),
-  ]);
+  // Keep provider generation flat. Deterministic validation still rejects unsupported bilateral findings.
+  return generatedFindingBase.extend({ status: findingSchema.shape.status, evidence: slots }).strict();
 }
 const maxTurnEvidence = 24;
 const questionGenerationSchema = z.object({
@@ -206,9 +202,9 @@ function currentTurnSchema(rubric: readonly QualificationCriterion[], sources: Q
   const criterionId = z.enum(rubric.map(criterion => criterion.id) as [string, ...string[]]);
   const allCitation = citation({ ...sources[0], evidence: sources.flatMap(source => source.evidence) });
   const finding = generatedFindingSchema(citation(sources[0]), citation(sources[1]), allCitation);
-  // Nested status branches are representable in JSON Schema. Exact quote checks stay deterministic below.
+  // Owner reference enums stay in the generation schema. Quote and bilateral rules remain deterministic below.
   return qualificationTurnSchema.extend({
-    findings: z.array(z.union([finding.options[0].extend({ criterionId }), finding.options[1].extend({ criterionId }), finding.options[2].extend({ criterionId })])).length(rubric.length),
+    findings: z.array(finding.extend({ criterionId })).length(rubric.length),
     ownerQuestions: z.array(questionGenerationSchema.extend({ criterionIds: z.array(criterionId).min(1).max(4) }).strict()).max(3),
   });
 }
