@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createPublicClient, getAddress, http, keccak256, parseAbi, parseTransaction, recoverTransactionAddress, stringToHex, webSocket, type Address, type Hex, type TransactionSerialized } from 'viem';
+import { createPublicClient, decodeFunctionResult, encodeFunctionData, getAddress, http, keccak256, namehash, parseAbi, parseTransaction, recoverTransactionAddress, stringToHex, webSocket, type Address, type Hex, type TransactionSerialized } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 import { rabdi } from '@arkiv-network/sdk/chains';
 import { z } from 'zod';
-import { createEnsAuthorityProvider, ALL_ROLES, inlinePolicyDigest, ENS_DEPLOYMENT, POLICY_KEY, type EnsOperation } from '../packages/ens';
-import { factoryAbi, registryAbi, resolverAbi } from '../packages/ens/abi';
+import { createEnsAuthorityProvider, ALL_ROLES, dnsEncode, inlinePolicyDigest, ENS_DEPLOYMENT, POLICY_KEY, textResource, type EnsOperation } from '../packages/ens';
+import { factoryAbi, registryAbi, resolverAbi, textProfileAbi } from '../packages/ens/abi';
 import { createEnsReadTransport } from '../packages/ens/rpc-transport';
 import { createAgentIdentityProvider, ERC8004_SEPOLIA, identityRegistryAbi, type PreparedIdentityTransaction } from '../packages/ens/agent-identity';
 import { AGENT_CONTEXT_KEY, agentRegistrationKey, erc8004RegistrationSchema, publicAgentContextSchema, registrationDataUri, registryReference, validateRegistrationAgreement, type AgentRegistryIdentity } from '../packages/ens/agent-records';
@@ -222,7 +222,14 @@ async function main() {
         else if (operation.id.endsWith('-agent')) requireEvent(same((await client.readContract({ address: r.recipientRegistry, abi: registryAbi, functionName: 'getState', args: [BigInt(keccak256(stringToHex('networking')))] })).latestOwner, r.owner), 'event_agent_owner_readback_failed');
         else if (operation.id.endsWith('-grant')) await authority(r);
         else if (operation.id.endsWith('-attach')) requireEvent(same(await client.readContract({ address: r.recipientRegistry, abi: registryAbi, functionName: 'getResolver', args: ['networking'] }), r.resolver), 'event_resolver_attachment_readback_failed');
-        else { const records = await ens.readPublicAgentRecords({ ensName: r.agentName, owner: r.owner, keys: [POLICY_KEY] }); requireEvent(records.records[POLICY_KEY] === JSON.stringify(r.proposedPublicPolicy), 'event_policy_readback_failed'); } return;
+        else {
+          const verified = await ens.readPublicAgentRecords({ ensName: r.agentName, owner: r.owner, keys: [] });
+          requireEvent(same(verified.resolver, r.resolver), 'event_policy_resolver_binding_changed');
+          const blockNumber = BigInt(verified.blockNumber), profile = encodeFunctionData({ abi: textProfileAbi, functionName: 'text', args: [namehash(r.agentName), POLICY_KEY] });
+          const [scope, encoded] = await Promise.all([client.readContract({ address: r.resolver, abi: resolverAbi, functionName: 'roleCount', args: [textResource(POLICY_KEY)], blockNumber }),
+            client.readContract({ address: r.resolver, abi: resolverAbi, functionName: 'resolve', args: [dnsEncode(r.agentName), profile], blockNumber })]);
+          requireEvent(scope === 0n && decodeFunctionResult({ abi: textProfileAbi, functionName: 'text', data: encoded }) === JSON.stringify(r.proposedPublicPolicy), 'event_policy_readback_failed');
+        } return;
       }
       requireEvent(entry.quote && entry.hash, 'event_identity_api_quote_missing');
       requireEvent((await api<{ confirmed: boolean }>(r, 'identity/confirm', { operationId: entry.quote.operationId, hash: entry.hash })).confirmed === true, 'event_api_identity_confirmation_not_successful');
@@ -312,7 +319,12 @@ async function main() {
         catch { /* Closing must not expose authenticated endpoints or replace the original result. */ }
       }
     }
-  } catch (error) { console.error(JSON.stringify({ operation: activeId, code: error instanceof EventExecutionError ? error.code : 'event_execution_stopped_preserve_private_journal', replacementOrResendAttempted: false })); process.exitCode = 1; }
+  } catch (error) {
+    const location = error instanceof Error ? /event-demo-execute\.ts:(\d+):(\d+)/.exec(error.stack || '') : null;
+    console.error(JSON.stringify({ operation: activeId, code: error instanceof EventExecutionError ? error.code : 'event_execution_stopped_preserve_private_journal',
+      runtimeCategory: error instanceof TypeError ? 'type_error' : error instanceof RangeError ? 'range_error' : 'other', sourceLine: location ? Number(location[1]) : null,
+      replacementOrResendAttempted: false })); process.exitCode = 1;
+  }
   finally { closeSync(lock); unlinkSync(lockPath); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main().catch(error => { console.error(error instanceof EventExecutionError || error instanceof FundingCorrectionError || error instanceof PolicyCorrectionError ? error.code : 'event_execution_startup_failed_no_private_diagnostics'); process.exitCode = 1; });

@@ -240,6 +240,19 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
       const references = [...new Set([...data.self.evidence, ...data.other.evidence].map(evidence => evidence.reference))];
       expect(properties).not.toHaveProperty("evidence");
       expect(properties.findings.items.anyOf).toHaveLength(3);
+      function assertStrictSchema(node: unknown) {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node)) { node.forEach(assertStrictSchema); return; }
+        const current = node as Record<string, unknown>;
+        // Groq documents nested anyOf, required fields and closed objects. Never infer server acceptance from this check.
+        expect(current).not.toHaveProperty('oneOf');
+        if (current.type === 'object') {
+          expect(current.additionalProperties).toBe(false);
+          expect([...(current.required as string[])].sort()).toEqual(Object.keys(current.properties as object).sort());
+        }
+        Object.values(current).forEach(assertStrictSchema);
+      }
+      assertStrictSchema(body.response_format.json_schema.schema);
       for (const branch of properties.findings.items.anyOf) {
         expect(branch.additionalProperties).toBe(false);
         expect(branch.properties).not.toHaveProperty("evidenceReferences");
