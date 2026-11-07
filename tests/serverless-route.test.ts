@@ -17,7 +17,7 @@ function fixture(status = 'queued', httpStatus = 202) {
 }
 beforeEach(() => {
   vi.stubEnv('DATABASE_PROVIDER', 'postgres'); vi.stubEnv('SUPABASE_DATABASE_URL', 'fixture-not-a-credential');
-  vi.stubEnv('AI_GLOBAL_BUDGET_ID', 'fixture'); vi.stubEnv('AGENT_TASK_QUEUE_ENABLED', 'true'); vi.stubEnv('WORLD_CAPABILITY_ENABLED', 'false');
+  vi.stubEnv('AI_ENFORCE_BUDGETS', 'true'); vi.stubEnv('AI_GLOBAL_BUDGET_ID', 'fixture'); vi.stubEnv('AGENT_TASK_QUEUE_ENABLED', 'true'); vi.stubEnv('WORLD_CAPABILITY_ENABLED', 'false');
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('serverless continuation boundary', () => {
@@ -30,6 +30,11 @@ describe('serverless continuation boundary', () => {
     const f=fixture();f.route.mockResolvedValue(Response.json({data:[{batchId:id,status:'qualifying'}]}));
     await f.handle(new Request('https://app.test/api/auto-qualifications'),['auto-qualifications']);expect(f.work).toHaveLength(1);
     f.user.mockResolvedValue({id:'another-owner'} as never);await f.work[0]();expect(f.autoQualification).not.toHaveBeenCalled();
+  });
+  it('serves without a budget identifier when application budgets are disabled', async () => {
+    vi.stubEnv('AI_ENFORCE_BUDGETS', 'false'); vi.stubEnv('AI_GLOBAL_BUDGET_ID', '');
+    const f = fixture(); expect((await f.handle(new Request('https://app.test/api/health'), ['health'])).status).toBe(202);
+    expect(f.route).toHaveBeenCalledTimes(1);
   });
   it('fails closed without durable hosting configuration', async () => {
     vi.stubEnv('DATABASE_PROVIDER', 'sqlite'); const f = fixture();

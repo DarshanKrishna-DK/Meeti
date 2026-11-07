@@ -37,6 +37,7 @@ function result(input: QualificationInput, state: QualificationResult['state'] =
         ownerQuestions: state === 'needs_owner' ? [{ id: randomUUID(), ownerAgentId: input.left.agentId, askedByAgentId: input.right.agentId, question: 'What contribution do you explicitly offer?', criterionIds: [], evidence: [], round: 1, createdAt: timestamp }] : [], answers: [], policyChecks: [], disclosureChecks: [], createdAt: timestamp, updatedAt: timestamp };
 }
 beforeEach(() => {
+    vi.stubEnv('AI_ENFORCE_BUDGETS', 'true');
     closeDatabase();
     directory = mkdtempSync(join(tmpdir(), 'meeti-qualification-'));
     vi.stubEnv('DATABASE_PATH', join(directory, 'test.sqlite'));

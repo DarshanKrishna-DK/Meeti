@@ -31,7 +31,7 @@ export function hostedConfiguration(environment: NodeJS.ProcessEnv = process.env
   if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('hosted_origin_invalid');
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('hosted_port_invalid');
   if (environment.DATABASE_PROVIDER !== 'postgres' || !environment.SUPABASE_DATABASE_URL) throw new Error('hosted_postgres_required');
-  if (!environment.AI_GLOBAL_BUDGET_ID) throw new Error('hosted_durable_ai_budget_required');
+  if (environment.AI_ENFORCE_BUDGETS === 'true' && !environment.AI_GLOBAL_BUDGET_ID) throw new Error('hosted_durable_ai_budget_required');
   if (!/^[a-f0-9]{64}$/i.test(environment.DATA_ENCRYPTION_KEY || '')) throw new Error('hosted_encryption_key_required');
   if (environment.WORLD_CAPABILITY_ENABLED === 'true') throw new Error('hosted_world_must_remain_paused');
   if (environment.AGENT_TASK_QUEUE_ENABLED !== 'true') throw new Error('hosted_agent_task_queue_required');

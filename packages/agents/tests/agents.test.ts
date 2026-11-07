@@ -116,6 +116,45 @@ describe("real provider adapter with test-only HTTP fixtures", () => {
     await expect(new OpenAICompatibleProvider({ ...config, maxCostUsd: 0.000001 }, transport).generate(request)).rejects.toMatchObject({ code: "budget" });
     expect(transport).not.toHaveBeenCalled();
   });
+  it("can explicitly disable process request and cost caps while still tracking reported usage", async () => {
+    const transport = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 10_000_000, completion_tokens: 10 },
+    })));
+    const provider = new OpenAICompatibleProvider({ ...config, enforceBudget: false, maxRequests: 1, maxCostUsd: 0.000001 }, transport);
+    for (let index = 0; index < 3; index++) expect((await provider.generate(request)).output).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(3); expect(provider.usage.requests).toBe(3);
+    expect(provider.usage.reservedCostUsd).toBeGreaterThan(30);
+  });
+  it.each([undefined, 'false', 'true'])("sets application budget enforcement explicitly from AI_ENFORCE_BUDGETS=%s", async toggle => {
+    const transport = vi.fn<typeof fetch>(async () => completion({ ok: true }));
+    const provider = createProviderFromEnv({ AI_BASE_URL: config.baseUrl, AI_API_KEY: config.apiKey, AI_MODEL: config.model,
+      AI_INPUT_USD_PER_MILLION: '1', AI_OUTPUT_USD_PER_MILLION: '1', AI_MAX_REQUESTS: '1', AI_MAX_COST_USD: '1', AI_ENFORCE_BUDGETS: toggle }, transport);
+    await expect(provider.generate(request)).resolves.toHaveProperty('output.ok', true);
+    if (toggle === 'true') await expect(provider.generate(request)).rejects.toMatchObject({ code: 'budget' });
+    else await expect(provider.generate(request)).resolves.toHaveProperty('output.ok', true);
+    expect(transport).toHaveBeenCalledTimes(toggle === 'true' ? 1 : 2);
+  });
+  it("still rejects provider-reported output token overflow when process budgets are disabled", async () => {
+    const transport = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      choices: [{ finish_reason: 'stop', message: { content: '{"ok":true}' } }], usage: { prompt_tokens: 20, completion_tokens: 513 },
+    })));
+    const provider = new OpenAICompatibleProvider({ ...config, enforceBudget: false, maxCostUsd: 0.000001 }, transport);
+    await expect(provider.generate(request)).rejects.toMatchObject({ code: 'budget' });
+    expect(transport).toHaveBeenCalledOnce(); expect(provider.usage.requests).toBe(1);
+  });
+  it("still rejects oversized response bodies when process budgets are disabled", async () => {
+    const transport = vi.fn<typeof fetch>(async () => new Response('x'.repeat(128001)));
+    await expect(new OpenAICompatibleProvider({ ...config, enforceBudget: false }, transport).generate(request)).rejects.toMatchObject({ code: 'output', message: 'The AI response exceeded its size limit.' });
+    expect(transport).toHaveBeenCalledOnce();
+  });
+  it("still enforces input size and task schemas when process budgets are disabled", async () => {
+    const transport = vi.fn<typeof fetch>(async () => completion({ wrong: true }));
+    const provider = new OpenAICompatibleProvider({ ...config, enforceBudget: false, maxCostUsd: 0.000001 }, transport);
+    await expect(provider.generate({ ...request, data: { text: 'x'.repeat(24000) } })).rejects.toMatchObject({ code: 'input' });
+    expect(transport).not.toHaveBeenCalled(); expect(provider.usage.requests).toBe(0);
+    await expect(provider.generate(request)).rejects.toMatchObject({ code: 'output' });
+    expect(transport).toHaveBeenCalledOnce();
+  });
   it("accounts for reported usage even when the completion fails task validation", async () => {
     const transport = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       id: "test-only-invalid-usage", choices: [{ finish_reason: "stop", message: { content: '{"wrong":true}' } }],

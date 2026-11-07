@@ -56,6 +56,7 @@ const configSchema = z.object({
   timeoutMs: z.number().int().min(100).max(60_000),
   maxRequests: z.number().int().min(1).max(100),
   maxCostUsd: z.number().positive().max(10),
+  enforceBudget: z.boolean().default(true),
   inputUsdPerMillion: z.number().nonnegative(),
   outputUsdPerMillion: z.number().nonnegative(),
   maxOutputTokens: z.number().int().min(128).max(4096),
@@ -166,7 +167,7 @@ const isolation = [
   "Use full words and do not use em dash punctuation. Explain uncertainty honestly.",
 ].join(" ");
 
-/** A process-scoped safety cap. Supply a durable per-account limiter at the API boundary. */
+/** Configurable process budgets retain usage metadata independently from token, schema and transport guards. */
 export class OpenAICompatibleProvider implements StructuredProvider {
   private readonly config: z.output<typeof configSchema>;
   private requests = 0;
@@ -214,7 +215,7 @@ export class OpenAICompatibleProvider implements StructuredProvider {
     if (inputBytes > this.config.maxInputBytes) throw new AgentError("input", "This request exceeds the configured input size limit.");
     // A UTF-8 byte is a conservative input-token reservation for supported text tokenizers.
     const reserve = ((inputBytes + 512) * this.config.inputUsdPerMillion + this.config.maxOutputTokens * this.config.outputUsdPerMillion) / 1_000_000;
-    if (this.requests >= this.config.maxRequests || this.reservedCostUsd + reserve > this.config.maxCostUsd) {
+    if (this.config.enforceBudget && (this.requests >= this.config.maxRequests || this.reservedCostUsd + reserve > this.config.maxCostUsd)) {
       throw new AgentError("budget", "The configured AI request or cost budget is exhausted.");
     }
     // Reserve synchronously before awaiting to make concurrent calls share the same cap.
@@ -270,10 +271,10 @@ export class OpenAICompatibleProvider implements StructuredProvider {
       let parsed: z.infer<typeof responseSchema>;
       try { parsed = responseSchema.parse(JSON.parse(new TextDecoder().decode(buffer))); }
       catch { throw new AgentError("output", "The AI provider response did not match the required completion schema."); }
-      // Provider usage still consumes the cap when local task validation rejects the output.
+      // Track reported usage even when local task validation rejects the output or budgets are disabled.
       const cost = (parsed.usage.prompt_tokens * this.config.inputUsdPerMillion + parsed.usage.completion_tokens * this.config.outputUsdPerMillion) / 1_000_000;
       if (cost > reserve) this.reservedCostUsd += cost - reserve;
-      if (parsed.usage.completion_tokens > this.config.maxOutputTokens || this.reservedCostUsd > this.config.maxCostUsd) {
+      if (parsed.usage.completion_tokens > this.config.maxOutputTokens || (this.config.enforceBudget && this.reservedCostUsd > this.config.maxCostUsd)) {
         throw new AgentError("budget", "The provider usage exceeded the configured budget. Further AI requests are blocked.");
       }
       const choice = parsed.choices[0];
@@ -308,6 +309,7 @@ export function createProviderFromEnv(env: Record<string, string | undefined>, t
     baseUrl: env.AI_BASE_URL ?? "https://api.openai.com/v1", apiKey: env.AI_API_KEY, model: env.AI_MODEL,
     timeoutMs: number("AI_TIMEOUT_MS", 20_000), maxRequests: number("AI_MAX_REQUESTS", 20),
     maxCostUsd: number("AI_MAX_COST_USD", 0.05), inputUsdPerMillion: number("AI_INPUT_USD_PER_MILLION", NaN),
+    enforceBudget: env.AI_ENFORCE_BUDGETS === 'true',
     outputUsdPerMillion: number("AI_OUTPUT_USD_PER_MILLION", NaN), maxOutputTokens: number("AI_MAX_OUTPUT_TOKENS", 1200),
     maxInputBytes: number("AI_MAX_INPUT_BYTES", 24_000),
     responseFormat: env.AI_RESPONSE_FORMAT ?? "json_object",

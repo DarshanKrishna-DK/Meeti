@@ -40,6 +40,7 @@ export function inferenceBudgetConfiguration(environment: Environment = process.
 
 /** No runtime provisioning or allowance reset. Unknown outcomes retain the complete conservative reservation. */
 export function durableInferenceProvider(delegate: StructuredProvider, environment: Environment = process.env): StructuredProvider {
+  if (environment.AI_ENFORCE_BUDGETS !== 'true') return delegate;
   if (environment.DATABASE_PROVIDER !== 'postgres' && !environment.AI_GLOBAL_BUDGET_ID) return delegate;
   const binding = inferenceBudgetConfiguration(environment);
   async function reserve(task: string, reservation: InferenceReservation) {

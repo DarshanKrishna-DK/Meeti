@@ -19,7 +19,7 @@ type Dependencies = {
 export function createServerlessRoute(dependencies: Dependencies) {
   return async (request: Request, path: string[]) => {
     if (process.env.DATABASE_PROVIDER !== 'postgres' || !process.env.SUPABASE_DATABASE_URL
-      || !process.env.AI_GLOBAL_BUDGET_ID || process.env.AGENT_TASK_QUEUE_ENABLED !== 'true'
+      || (process.env.AI_ENFORCE_BUDGETS === 'true' && !process.env.AI_GLOBAL_BUDGET_ID) || process.env.AGENT_TASK_QUEUE_ENABLED !== 'true'
       || process.env.WORLD_CAPABILITY_ENABLED === 'true') {
       return Response.json({ error: { code: 'HOST_CONFIGURATION_REQUIRED', message: 'The hosted application is not ready. Private persistence and bounded agent processing must be configured.' } }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
     }

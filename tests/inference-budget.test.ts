@@ -10,7 +10,7 @@ import { closeStore } from '../packages/server/store';
 import { durableInferenceProvider, inferenceBudgetConfiguration } from '../packages/server/inference-budget';
 
 let directory: string;
-const environment = { DATABASE_PROVIDER: 'sqlite', AI_GLOBAL_BUDGET_ID: 'fixture-deployment-budget', AI_MODEL: 'fixture-model', AI_BASE_URL: 'https://provider.fixture.invalid/v1',
+const environment = { AI_ENFORCE_BUDGETS: 'true', DATABASE_PROVIDER: 'sqlite', AI_GLOBAL_BUDGET_ID: 'fixture-deployment-budget', AI_MODEL: 'fixture-model', AI_BASE_URL: 'https://provider.fixture.invalid/v1',
   AI_INPUT_USD_PER_MILLION: '1', AI_OUTPUT_USD_PER_MILLION: '1', AI_MAX_OUTPUT_TOKENS: '128', AI_MAX_INPUT_BYTES: '24000' };
 const input = () => ({ task: 'fixture_task', instructions: 'Return the fixture result.', data: { public: 'fictional' }, outputSchema: z.object({ ok: z.boolean() }) });
 function seed(maxRequests = 3, maxCost = 100_000_000) {
@@ -34,7 +34,13 @@ afterEach(async () => { await closeStore(); closeDatabase(); vi.unstubAllEnvs();
 describe('durable global model allowance with real adapter and fixture HTTP', () => {
   it('preserves the local process-only mode without an explicit global allowance', () => {
     const { delegate } = provider(); expect(durableInferenceProvider(delegate, {})).toBe(delegate);
-    expect(() => durableInferenceProvider(delegate, { DATABASE_PROVIDER: 'postgres' })).toThrow(AgentError);
+    expect(() => durableInferenceProvider(delegate, { DATABASE_PROVIDER: 'postgres', AI_ENFORCE_BUDGETS: 'true' })).toThrow(AgentError);
+  });
+  it('bypasses the ledger when application budgets are disabled', async () => {
+    seed(0); const { delegate } = provider();
+    const wrapped = durableInferenceProvider(delegate, { ...environment, AI_ENFORCE_BUDGETS: 'false' });
+    expect(wrapped).toBe(delegate); expect((await wrapped.generate(input())).output).toEqual({ ok: true });
+    expect(budget().used_requests).toBe(0);
   });
   it('binds model, endpoint, prices and input/output limits but permits credential rotation', () => {
     const first = inferenceBudgetConfiguration(environment);

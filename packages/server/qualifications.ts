@@ -111,7 +111,7 @@ async function persist(record: RecordValue, state: string, token?: string) {
 }
 function summary(value: QualificationData) { return value.result?.messages.slice(-2).map(message => message.message).join('\n\n') || 'Agents are reviewing the approved intentions. No introduction decision has been assumed.'; }
 const maxAttempts = 6;
-function costLimit() { return Math.min(0.05, Number(process.env.AI_MAX_COST_USD || '0.05')); }
+function costLimit() { return process.env.AI_ENFORCE_BUDGETS === 'true' ? Math.min(0.05, Number(process.env.AI_MAX_COST_USD || '0.05')) : Number.POSITIVE_INFINITY; }
 function remaining(value: QualificationData) {
     return Boolean(value.attempts && value.attempts.length < maxAttempts && value.attempts.reduce((sum, attempt) => sum + attempt.reservedCostUsd, 0) < costLimit());
 }
