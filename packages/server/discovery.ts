@@ -46,7 +46,10 @@ export async function discoverCandidates(userId: string, own: Intent, input: {
     goal?: Intent['goal'];
     tags?: string[];
     includeDemo?: boolean;
+    maximumCandidates?: number;
 }) {
+    const candidateLimit = input.maximumCandidates ?? 12;
+    if (!Number.isInteger(candidateLimit) || candidateLimit < 1 || candidateLimit > 12) throw new HttpError(400, 'DISCOVERY_BOUND_INVALID', 'Choose a supported bounded discovery limit.');
     const source = await freshPublicIntent(userId, own, 'discover');
     const blocked = await db().prepare('SELECT users.wallet FROM blocks JOIN users ON users.id=blocks.blocked_id WHERE blocks.user_id=? UNION SELECT users.wallet FROM blocks JOIN users ON users.id=blocks.user_id WHERE blocks.blocked_id=?').all(userId, userId) as {
         wallet: string | null;
@@ -54,20 +57,20 @@ export async function discoverCandidates(userId: string, own: Intent, input: {
     const directions = DirectionSchema.options.filter(direction => directionCompatibility(source.publication.intent.semantics.direction, direction).compatible);
     if (!directions.length)
         throw new HttpError(409, 'INTENT_CLARIFICATION_REQUIRED', 'Clarify your relationship direction before searching.');
-    const filter = { goal: input.goal || own.goal, excludeOwner: source.a.owner, blockedOwners: blocked.flatMap(x => x.wallet ? [x.wallet] : []), includeDemo: input.includeDemo, directions, limit: 12 };
+    const filter = { goal: input.goal || own.goal, excludeOwner: source.a.owner, blockedOwners: blocked.flatMap(x => x.wallet ? [x.wallet] : []), includeDemo: input.includeDemo, directions, limit: candidateLimit };
     const adapter = arkiv();
     const focused = input.tags?.length ? await adapter.discover({ ...filter, tags: input.tags }) : null;
     // Always perform the broader scan: a literal tag hit must not hide paraphrases.
     const broad = await adapter.discover(filter);
     const interleaved: DiscoveredIntent[] = [];
-    for (let index = 0; index < 12; index++) {
+    for (let index = 0; index < candidateLimit; index++) {
         if (broad.candidates[index])
             interleaved.push(broad.candidates[index]);
         if (focused?.candidates[index])
             interleaved.push(focused.candidates[index]);
     }
     const uniquePublications = [...new Map(interleaved.map(value => [value.entityKey, value])).values()];
-    const publications = uniquePublications.slice(0, 12);
+    const publications = uniquePublications.slice(0, candidateLimit);
     const eligible: {
         publication: DiscoveredIntent;
         participant: MatchingParticipant;
@@ -109,7 +112,7 @@ export async function discoverCandidates(userId: string, own: Intent, input: {
     return { candidates, source: 'arkiv' as const, mode: 'semantic' as const,
         embeddingExecution: ranked.some(value => value.embedding !== null) ? 'executed' : 'not-required-no-semantically-eligible-candidates',
         observedBlocks: [...(focused?.observedBlocks || []), ...broad.observedBlocks],
-        coverage: { strategy: focused ? 'topic query plus broad category scan' : 'broad category scan', candidateLimit: 12,
-            scannedCandidates: publications.length, unconfirmed, exhaustive: false, truncated: uniquePublications.length > 12 || broad.truncated || Boolean(focused?.truncated) },
+        coverage: { strategy: focused ? 'topic query plus broad category scan' : 'broad category scan', candidateLimit,
+            scannedCandidates: publications.length, unconfirmed, exhaustive: false, truncated: uniquePublications.length > candidateLimit || broad.truncated || Boolean(focused?.truncated) },
         rejectedEntities: broad.rejectedEntities + (focused?.rejectedEntities || 0) };
 }

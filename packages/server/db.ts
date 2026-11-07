@@ -15,7 +15,7 @@ export type ProposalData = {
   createdAt: string;
 };
 export type ProposalRow = { id: string; left_user: string; right_user: string; pair_key: string; status: string; digest: string; data: string };
-const schemaVersion = 9;
+const schemaVersion = 10;
 const cache = globalThis as typeof globalThis & { meetiDb?: { path: string; db: DatabaseSync; schemaVersion?: number } };
 export function db(): DatabaseSync {
   const path = resolve(/* turbopackIgnore: true */ process.env.DATABASE_PATH || '.local-data/meeti.sqlite');
@@ -32,6 +32,7 @@ export function db(): DatabaseSync {
   connection.exec(readFileSync(resolve('migrations/007_namespace_claims.sql'), 'utf8'));
   connection.exec(readFileSync(resolve('migrations/008_agent_tasks.sql'), 'utf8'));
   connection.exec(readFileSync(resolve('migrations/009_inference_budget.sql'), 'utf8'));
+  connection.exec(readFileSync(resolve('migrations/010_auto_qualification.sql'), 'utf8'));
   cache.meetiDb = { path, db: connection, schemaVersion };
   return connection;
 }

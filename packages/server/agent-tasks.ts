@@ -109,6 +109,19 @@ export async function readAgentTask(userId: string, id: string): Promise<AgentTa
     return taskDto(row);
   });
 }
+/** Fence unfinished work. A late provider response cannot advance a cancelled task. */
+export async function cancelAgentTask(userId: string, id: string): Promise<AgentTaskDto> {
+  z.string().uuid().parse(id);
+  return atomic(async () => {
+    const row = await db().prepare('SELECT * FROM agent_tasks WHERE id=? AND user_id=?').get(id, userId) as TaskRow | undefined;
+    if (!row) throw new HttpError(404, 'NOT_FOUND', 'Agent task was not found.');
+    if (!['queued', 'running'].includes(row.status)) return taskDto(row);
+    const value = decode(row), now = new Date().toISOString();
+    await db().prepare("UPDATE agent_tasks SET status='expired',data=?,lease_token=NULL,updated_at=?,expires_at=? WHERE id=? AND user_id=? AND status IN ('queued','running')")
+      .run(encrypt({ ...value, error: { code: 'AGENT_TASK_CANCELLED', message: 'The owner cancelled this unfinished task. Previously completed activity remains in history.' } }, `agent-task:${userId}:${id}`), now, now, id, userId);
+    return taskDto((await db().prepare('SELECT * FROM agent_tasks WHERE id=? AND user_id=?').get(id, userId)) as TaskRow);
+  });
+}
 /** Resume polling after refresh or another device without exposing task input or session bindings. */
 export async function listAgentTasks(userId: string): Promise<AgentTaskDto[]> {
   return atomic(async () => {

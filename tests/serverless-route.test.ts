@@ -11,9 +11,9 @@ function fixture(status = 'queued', httpStatus = 202) {
   const work: (() => Promise<void>)[] = [];
   const route = vi.fn(async () => Response.json({ data: { taskId: id, status } }, { status: httpStatus }));
   const user = vi.fn(async () => ({ id: 'owner' } as never));
-  const task = vi.fn(async () => ({})), discovery = vi.fn(async () => ({}));
-  const handle = createServerlessRoute({ route, user, task, discovery, schedule: job => work.push(job) });
-  return { handle, route, user, task, discovery, work };
+  const task = vi.fn(async () => ({})), discovery = vi.fn(async () => ({})), autoQualification=vi.fn(async()=>({}));
+  const handle = createServerlessRoute({ route, user, task, discovery, autoQualification, schedule: job => work.push(job) });
+  return { handle, route, user, task, discovery, autoQualification, work };
 }
 beforeEach(() => {
   vi.stubEnv('DATABASE_PROVIDER', 'postgres'); vi.stubEnv('SUPABASE_DATABASE_URL', 'fixture-not-a-credential');
@@ -21,6 +21,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('serverless continuation boundary', () => {
+  it('schedules the exact opted-in confirmed publication batch instead of a second discovery scan',async()=>{
+    const f=fixture();f.route.mockResolvedValue(Response.json({data:{entityKey:'fixture',autoQualification:{batchId:id,status:'queued'}}}));
+    await f.handle(new Request('https://app.test/api/intent/confirm',{method:'POST'}),['intent','confirm']);
+    expect(f.work).toHaveLength(1);await f.work[0]();expect(f.autoQualification).toHaveBeenCalledWith('owner',id);expect(f.discovery).not.toHaveBeenCalled();expect(f.task).not.toHaveBeenCalled();
+  });
+  it('continues only an authenticated saved active batch on owner polling',async()=>{
+    const f=fixture();f.route.mockResolvedValue(Response.json({data:[{batchId:id,status:'qualifying'}]}));
+    await f.handle(new Request('https://app.test/api/auto-qualifications'),['auto-qualifications']);expect(f.work).toHaveLength(1);
+    f.user.mockResolvedValue({id:'another-owner'} as never);await f.work[0]();expect(f.autoQualification).not.toHaveBeenCalled();
+  });
   it('fails closed without durable hosting configuration', async () => {
     vi.stubEnv('DATABASE_PROVIDER', 'sqlite'); const f = fixture();
     expect((await f.handle(new Request('https://app.test/api/health'), ['health'])).status).toBe(503);

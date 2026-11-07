@@ -30,6 +30,7 @@ import { meetingAction, meetingDto } from './meetings';
 import { continueIntake, profileIntakes } from './profile-intake';
 import { listQualificationDtos, answerQualification, resumeQualification, retryQualification, cancelQualification } from './qualifications';
 import { handleIdentity, publicAgentResponse } from './identity';
+import { requestAutoQualification, listAutoQualifications, cancelAutoQualification } from './auto-qualification';
 function ok(data: unknown, cookie?: string): Response {
     return Response.json({ data }, { headers: { 'Cache-Control': 'no-store', ...(cookie ? { 'Set-Cookie': cookie } : {}) } });
 }
@@ -124,6 +125,11 @@ export async function route(request: Request, path: string[]): Promise<Response>
             }
             if (key === 'qualifications')
                 return ok(await listQualificationDtos(actor.id));
+            if (key === 'auto-qualifications') {
+                const batches = await listAutoQualifications(actor.id);
+                await requireRequestActor(request, actor);
+                return ok(batches);
+            }
             if (path[0] === 'agent-tasks' && path.length === 2) {
                 const task = await readAgentTask(actor.id, path[1]);
                 await requireRequestActor(request, actor);
@@ -492,7 +498,7 @@ export async function route(request: Request, path: string[]): Promise<Response>
             });
         }
         if (key === 'intent/confirm') {
-            const input = z.object({ intentId: z.string().uuid(), operationId: z.string().uuid(), entityKey: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }).strict().parse(body);
+            const input = z.object({ intentId: z.string().uuid(), operationId: z.string().uuid(), entityKey: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/), autoQualification: z.object({ approved: z.literal(true), includeDemo: z.boolean() }).strict().optional() }).strict().parse(body);
             const value = await ownIntent(actor.id, input.intentId), a = requireValue(await agent(actor.id), 'Set up your agent.');
             const row = await operation(actor.id, input.operationId, 'arkiv:' + value.id + ':' + value.version);
             const stored = decrypt<{
@@ -522,9 +528,17 @@ export async function route(request: Request, path: string[]): Promise<Response>
                 await saveIntent(actor.id, { ...value, status: value.publicStatus === 'closed' ? 'revoked' : 'published', arkivKey: confirmed.entityKey, transactionHash: input.txHash });
                 await db().prepare('UPDATE operations SET state=? WHERE id=?').run('confirmed', row.id);
                 await audit(actor.id, 'arkiv_publish', 'confirmed', input.txHash);
-                await queueDiscovery(actor.id, await ownIntent(actor.id, value.id));
-                return ok({ entityKey: confirmed.entityKey, transactionHash: input.txHash });
+                const published = await ownIntent(actor.id, value.id);
+                await queueDiscovery(actor.id, published);
+                const autoQualification = input.autoQualification && published.status === 'published'
+                    ? await requestAutoQualification(actor.id, requireValue(sessionTokenHash(request), 'Sign in to continue.', 401), published, input.autoQualification) : undefined;
+                return ok({ entityKey: confirmed.entityKey, transactionHash: input.txHash, autoQualification });
             });
+        }
+        if (path[0] === 'auto-qualifications' && path.length === 3 && path[2] === 'cancel') {
+            z.object({}).strict().parse(body);
+            await checkSession();
+            return ok(await cancelAutoQualification(actor.id, z.string().uuid().parse(path[1])));
         }
         if (path[0] === 'operations' && path.length === 3) {
             return await atomic(async () => {

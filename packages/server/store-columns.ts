@@ -41,6 +41,20 @@ export const storeColumns: Record<string, readonly string[]> = {
     "detail",
     "created_at"
   ],
+  "auto_qualification_batches": [
+    "id",
+    "user_id",
+    "intent_id",
+    "intent_version",
+    "entity_key",
+    "status",
+    "data",
+    "lease_token",
+    "lease_until",
+    "created_at",
+    "updated_at",
+    "expires_at"
+  ],
   "blocks": [
     "user_id",
     "blocked_id"

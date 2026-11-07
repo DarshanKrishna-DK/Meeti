@@ -4,6 +4,7 @@ import { route as applicationRoute } from './router';
 import { requireUser } from './security';
 import { drainAgentTasks } from './agent-tasks';
 import { discoveryTick } from './discovery-jobs';
+import { advanceAutoQualification } from './auto-qualification';
 
 type Dependencies = {
   route: typeof applicationRoute;
@@ -11,6 +12,7 @@ type Dependencies = {
   schedule: (work: () => Promise<void>) => void;
   task: (userId: string, taskId: string) => Promise<unknown>;
   discovery: (userId: string) => Promise<unknown>;
+  autoQualification?: (userId: string, batchId: string) => Promise<unknown>;
 };
 
 /** Background work belongs to the authenticated request and its already approved durable task. */
@@ -24,6 +26,19 @@ export function createServerlessRoute(dependencies: Dependencies) {
     const response = await dependencies.route(request, path);
     if (!response.ok) return response;
     const key = path.join('/');
+    const batchResponse = key === 'auto-qualifications' || request.method === 'POST' && key === 'intent/confirm';
+    if (batchResponse && dependencies.autoQualification) {
+      try {
+        const actor = await dependencies.user(request);
+        const value = await response.clone().json() as { data?: { autoQualification?: { batchId: string; status: string } } | { batchId: string; status: string }[] };
+        const batches = Array.isArray(value.data) ? value.data : value.data?.autoQualification ? [value.data.autoQualification] : [];
+        const batch = batches.find(item => ['queued', 'qualifying'].includes(item.status) && /^[0-9a-f-]{36}$/i.test(item.batchId));
+        if (batch) {
+          dependencies.schedule(async () => { try { if ((await dependencies.user(request)).id === actor.id) await dependencies.autoQualification!(actor.id, batch.batchId); } catch { console.warn('auto_qualification_step_unavailable'); } });
+          return response;
+        }
+      } catch { /* No work is scheduled without the authenticated owner. */ }
+    }
     const taskResponse = response.status === 202 || request.method === 'GET' && /^agent-tasks\/[0-9a-f-]{36}$/i.test(key);
     const discoveryResponse = key === 'discovery/jobs' || request.method === 'POST' && ['discovery/settings', 'intent/confirm', 'intent/close/confirm'].includes(key);
     if (!taskResponse && !discoveryResponse) return response;
@@ -55,4 +70,5 @@ export const route = createServerlessRoute({
   task: (userId, taskId) => drainAgentTasks({ userId, taskId, singleTurn: true,
     deadlineMs: Math.min(Date.now() + 280000, (getDeadline()?.getTime() ?? Date.now() + 290000) - 10000) }),
   discovery: userId => discoveryTick(undefined, { userId, maximumJobs: 1 }),
+  autoQualification: (userId, batchId) => advanceAutoQualification(userId, batchId),
 });

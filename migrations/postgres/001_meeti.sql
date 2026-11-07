@@ -192,6 +192,24 @@ CREATE TABLE IF NOT EXISTS inference_attempts (__row_order BIGSERIAL UNIQUE,
 );
 CREATE INDEX IF NOT EXISTS inference_attempts_by_budget ON inference_attempts(budget_id,created_at,request_id);
 
+CREATE TABLE IF NOT EXISTS auto_qualification_batches (__row_order BIGSERIAL UNIQUE,
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  intent_id TEXT NOT NULL REFERENCES intents(id) ON DELETE CASCADE,
+  intent_version INTEGER NOT NULL,
+  entity_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','searching','qualifying','completed','no_candidates','blocked','cancelled','expired','interrupted')),
+  data TEXT NOT NULL,
+  lease_token TEXT,
+  lease_until TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  UNIQUE(user_id,intent_id,intent_version,entity_key)
+);
+CREATE INDEX IF NOT EXISTS auto_qualification_by_owner ON auto_qualification_batches(user_id,created_at,id);
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_auto_qualification_per_owner ON auto_qualification_batches(user_id) WHERE status IN ('queued','searching','qualifying');
+
 REVOKE ALL ON ALL TABLES IN SCHEMA meeti_private FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA meeti_private FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA meeti_private REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated;
@@ -214,6 +232,9 @@ CREATE POLICY server_access ON meeti_private.agents TO meeti_runtime USING (true
 ALTER TABLE meeti_private.audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meeti_private.audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY server_access ON meeti_private.audit TO meeti_runtime USING (true) WITH CHECK (true);
+ALTER TABLE meeti_private.auto_qualification_batches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meeti_private.auto_qualification_batches FORCE ROW LEVEL SECURITY;
+CREATE POLICY server_access ON meeti_private.auto_qualification_batches TO meeti_runtime USING (true) WITH CHECK (true);
 ALTER TABLE meeti_private.blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meeti_private.blocks FORCE ROW LEVEL SECURITY;
 CREATE POLICY server_access ON meeti_private.blocks TO meeti_runtime USING (true) WITH CHECK (true);

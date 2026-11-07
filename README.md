@@ -395,7 +395,9 @@ After approved test identities are usable, `scripts/demo-core-flow.ts` exercises
 
 Normal windows and tabs in one browser profile share cookies. Use **two browser profiles**, **a normal and private session**, or **separate devices**. Sign in with distinct MetaMask wallets for the two participants. Do not copy one session cookie into both participants' contexts.
 
-The same person can use their account on mobile and laptop through one shared backend. Saved state refreshes when returning to the page and while it is visible. Unsaved form drafts stay local. Refresh never signs, publishes, approves or starts agent reasoning automatically. Profile changes intentionally invalidate proposals bound to the earlier profile snapshot, so finish your demo profile before requesting an introduction.
+The same person can use their account on mobile and laptop through one shared backend. Saved state refreshes when returning to the page and while it is visible. Unsaved form drafts stay local. Refresh never grants new consent, signs or publishes. Activity can continue an already approved bounded qualification request. Profile changes intentionally invalidate proposals bound to the earlier profile snapshot, so finish your demo profile before requesting an introduction.
+
+The publication review offers an optional automatic candidate review. After genuine Arkiv confirmation, it performs one search of at most four public candidates and selects at most two eligible distinct owners. Existing qualification tasks run sequentially with current ENS checks and provider budgets. Activity must remain open for continued serverless progress. Cancellation, changed identity or intent, revoked session, expiry and uncertain failures stop the batch. The state is private in Supabase; Arkiv remains the discovery authority. Apply `migrations/postgres/002_auto_qualification.sql` to an existing hosted database, or use the complete bootstrap for a new database. The 46 orchestration fixtures passed; the new automatic hosted flow still requires live acceptance.
 
 ### A dynamic demonstration
 

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
-const files = ['001_initial.sql', '002_onboarding.sql', '003_agent_runs.sql', '004_context.sql', '005_policy_history.sql', '006_networking_flow.sql', '007_namespace_claims.sql', '008_agent_tasks.sql', '009_inference_budget.sql'];
+const files = ['001_initial.sql', '002_onboarding.sql', '003_agent_runs.sql', '004_context.sql', '005_policy_history.sql', '006_networking_flow.sql', '007_namespace_claims.sql', '008_agent_tasks.sql', '009_inference_budget.sql', '010_auto_qualification.sql'];
 const source = files.map(file => readFileSync(`migrations/${file}`, 'utf8')).join('\n');
 const local = new DatabaseSync(':memory:');
 local.exec(source);

@@ -8,7 +8,7 @@ const services = vi.hoisted(() => ({ propose: vi.fn(), resume: vi.fn(), retry: v
 vi.mock('../packages/server/proposals', () => ({ createProposal: services.propose }));
 vi.mock('../packages/server/qualifications', async original => ({ ...await original<typeof import('../packages/server/qualifications')>(), resumeQualification: services.resume, retryQualification: services.retry, startQualification: services.propose, continueQualificationCheckpoint: services.continuation }));
 import { QualificationYield, type QualificationContinuation, type QualificationWorkerOptions } from '../packages/server/qualifications';
-import { drainAgentTasks, enqueueAgentTask, listAgentTasks, readAgentTask } from '../packages/server/agent-tasks';
+import { cancelAgentTask, drainAgentTasks, enqueueAgentTask, listAgentTasks, readAgentTask } from '../packages/server/agent-tasks';
 import { closeDatabase, db } from '../packages/server/db';
 import { db as store, closeStore, atomic } from '../packages/server/store';
 import { encrypt, hash } from '../packages/server/crypto';
@@ -40,6 +40,18 @@ beforeEach(() => {
 afterEach(async () => { await closeStore(); closeDatabase(); vi.useRealTimers(); vi.unstubAllEnvs(); rmSync(directory, { recursive: true, force: true }); });
 
 describe('durable explicitly requested agent tasks with session and service fixtures', () => {
+  it('fences owner-cancelled queued work and denies a different owner cancellation', async () => {
+    const actor=await owner(), other=await owner(), task=await enqueueAgentTask(actor.id,actor.sessionHash,'propose',input());
+    await expect(cancelAgentTask(other.id,task.taskId)).rejects.toMatchObject({status:404});
+    expect(await cancelAgentTask(actor.id,task.taskId)).toMatchObject({status:'expired',error:{code:'AGENT_TASK_CANCELLED'}});
+    expect(await drainAgentTasks()).toMatchObject({processed:0});expect(services.propose).not.toHaveBeenCalled();
+  });
+  it('fences an in-flight result after owner cancellation without changing it back to failed or completed', async () => {
+    const actor=await owner(), task=await enqueueAgentTask(actor.id,actor.sessionHash,'propose',input()), started=deferred<void>(), release=deferred<void>();
+    services.propose.mockImplementationOnce(async(_user,_id,_key,check)=>{await check();started.resolve();await release.promise;await check();return{id:null,qualificationId:randomUUID()};});
+    const worker=drainAgentTasks();await started.promise;await cancelAgentTask(actor.id,task.taskId);release.resolve();await worker;
+    expect(await readAgentTask(actor.id,task.taskId)).toMatchObject({status:'expired',error:{code:'AGENT_TASK_CANCELLED'}});
+  });
   it('requires exact owner and task scope for single-turn execution and does not select another owner', async () => {
     const actor = await owner(), other = await owner(), task = await enqueueAgentTask(actor.id, actor.sessionHash, 'propose', input());
     await expect(drainAgentTasks({ singleTurn: true })).rejects.toMatchObject({ code: 'AGENT_TASK_SCOPE_REQUIRED' });

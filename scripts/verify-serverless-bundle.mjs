@@ -13,7 +13,8 @@ if (process.env.MEETI_SERVERLESS === 'true' && !process.env.BACKEND_API_ORIGIN) 
   const modelFiles = new Set([...ONNX_ASSETS.map(asset => `${ONNX_DIRECTORY}/${asset.path}`), `${ONNX_DIRECTORY}/manifest.json`]);
   if (names.some(name => name.startsWith('.models/') && !modelFiles.has(name))) throw new Error('serverless_trace_unreviewed_model');
   for (const file of modelFiles) if (!names.includes(file)) throw new Error('serverless_trace_model_missing');
-  for (const file of ['node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1', 'node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node', 'scripts/extract-private-pdf.mjs']) {
+  // Transformers uses createRequire at runtime. ONNX needs its package entrypoint manifest as well as native binaries.
+  for (const file of ['node_modules/onnxruntime-node/package.json', 'node_modules/onnxruntime-node/dist/index.js', 'node_modules/onnxruntime-common/package.json', 'node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime.so.1', 'node_modules/onnxruntime-node/bin/napi-v6/linux/x64/onnxruntime_binding.node', 'scripts/extract-private-pdf.mjs']) {
     if (!names.includes(file)) throw new Error('serverless_trace_runtime_missing');
   }
   const bytes = paths.reduce((sum, file) => sum + statSync(file).size, 0);
