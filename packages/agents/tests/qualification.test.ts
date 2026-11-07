@@ -16,6 +16,8 @@ const participant = (id: string): AgentParticipant => ({
 const authorize: PolicyAuthorizer = async request => ({ allowed: true, reason: "Test fixture only", policyVersion: 1,
   allowedFieldIds: request.fieldIds.filter(id => id !== "contact"), checkedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
 type TurnData = { self: { agentId: string }; other: { agentId: string }; round: number; priorPeerMessages: unknown[]; answerReferences: unknown[] };
+type Citation = { reference: string; quote: string };
+const citationSlots = (self: Citation | null = null, other: Citation | null = null, additional: Citation[] = []) => ({ self, other, additional });
 function turn(data: TurnData, missing = false) {
   const own = `${data.self.agentId}:intent:summary`, peer = `${data.other.agentId}:intent:summary`;
   return {
@@ -23,7 +25,7 @@ function turn(data: TurnData, missing = false) {
     findings: QUALIFICATION_RUBRICS.collaborator.map(criterion => ({ criterionId: criterion.id,
       status: missing && criterion.id === "scope_expectations" ? "unknown" : "supported",
       explanation: missing && criterion.id === "scope_expectations" ? "The expected scope is unstated." : "Both supplied goals describe the accessible app.",
-      evidence: missing && criterion.id === "scope_expectations" ? [] : [{ reference: own, quote: "accessible app" }, { reference: peer, quote: "accessible app" }],
+      evidence: missing && criterion.id === "scope_expectations" ? citationSlots() : citationSlots({ reference: own, quote: "accessible app" }, { reference: peer, quote: "accessible app" }),
     })),
     peerQuestions: [], ownerQuestions: missing ? [{ owner: "self", criterionIds: ["scope_expectations"], question: "What contribution do you want to make to this app?" }] : [],
     requestedFieldIds: [],
@@ -65,8 +67,11 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
     const quotes = ["Build", "an", "accessible", "app", "together", "Build an", "an accessible", "accessible app", "app together", "Build an accessible", "an accessible app", "accessible app together"];
     const fixture = fixtureProvider(data => {
       const output = turn(data);
-      output.findings.forEach((finding, index) => { finding.evidence = quotes.slice(index * 3, index * 3 + 3)
-        .flatMap(quote => [{ reference: `${data.self.agentId}:intent:summary`, quote }, { reference: `${data.other.agentId}:intent:summary`, quote }]); });
+      output.findings.forEach((finding, index) => {
+        const citations = quotes.slice(index * 3, index * 3 + 3)
+          .flatMap(quote => [{ reference: `${data.self.agentId}:intent:summary`, quote }, { reference: `${data.other.agentId}:intent:summary`, quote }]);
+        finding.evidence = citationSlots(citations[0], citations[1], citations.slice(2));
+      });
       return output;
     });
     const result = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input());
@@ -74,13 +79,13 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
     for (const message of result.messages) {
       expect(message.evidence).toHaveLength(24);
       expect(new Set(message.evidence.map(citation => JSON.stringify([citation.reference, citation.quote]))).size).toBe(24);
-      expect([...new Set(message.evidence.map(citation => citation.quote))]).toEqual(quotes);
+      expect([...new Set(message.evidence.map(citation => citation.quote))].sort()).toEqual([...quotes].sort());
       expect(message.findings.every(finding => finding.evidenceReferences.length === 2)).toBe(true);
     }
   });
 
   it("rejects an invalid late inline quote before persisting or dropping any citation", async () => {
-    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[3].evidence[1].quote = "UNAUTHORIZED_QUOTE_NOT_IN_ANY_SOURCE"; return output; });
+    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[3].evidence.other!.quote = "UNAUTHORIZED_QUOTE_NOT_IN_ANY_SOURCE"; return output; });
     const persisted = vi.fn();
     const error = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction({ ...input(), onProgress: persisted }).catch(value => value);
     expect(qualificationOutputDiagnostic(error)).toBe("evidence");
@@ -88,7 +93,7 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   });
 
   it("rejects an entirely uncited unknown turn instead of inventing a quote", async () => {
-    const fixture = fixtureProvider(data => { const output = turn(data); output.findings.forEach(finding => { finding.status = "unknown"; finding.evidence = []; }); return output; });
+    const fixture = fixtureProvider(data => { const output = turn(data); output.findings.forEach(finding => { finding.status = "unknown"; finding.evidence = citationSlots(); }); return output; });
     const persisted = vi.fn();
     const error = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction({ ...input(), onProgress: persisted }).catch(value => value);
     expect(qualificationOutputDiagnostic(error)).toBe("missing_evidence");
@@ -96,7 +101,7 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   });
 
   it("rejects more than six generated citations for one finding before normalization", async () => {
-    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[0].evidence = Array.from({ length: 7 }, () => ({ ...output.findings[0].evidence[0] })); return output; });
+    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[0].evidence.additional = Array.from({ length: 5 }, () => ({ ...output.findings[0].evidence.self! })); return output; });
     const error = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input()).catch(value => value);
     expect(qualificationOutputDiagnostic(error)).toBe("provider_task_schema"); expect(fixture.calls).toHaveLength(1);
   });
@@ -132,12 +137,12 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   });
 
   it.each([
-    ["evidence_reference", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence[0].reference = "untrusted:unavailable"; }],
-    ["evidence_quote", "evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidence[0].quote = "Unavailable private text must never appear in diagnostics."; }],
+    ["evidence_reference", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.self!.reference = "untrusted:unavailable"; }],
+    ["evidence_quote", "evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.self!.quote = "Unavailable private text must never appear in diagnostics."; }],
     ["criterion_coverage", "criteria", (output: ReturnType<typeof turn>) => { output.findings[3] = { ...output.findings[0] }; }],
-    ["finding_reference_schema", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[3].evidence[0].reference = "untrusted:unavailable"; }],
-    ["finding_missing_citations", "finding_missing_citations", (output: ReturnType<typeof turn>) => { output.findings[0].evidence = []; }],
-    ["bilateral_evidence", "bilateral_evidence", (output: ReturnType<typeof turn>) => { output.findings[0].evidence = [output.findings[0].evidence[0]]; }],
+    ["finding_reference_schema", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[3].evidence.self!.reference = "untrusted:unavailable"; }],
+    ["finding_missing_citations", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence = citationSlots(); }],
+    ["bilateral_evidence", "provider_task_schema", (output: ReturnType<typeof turn>) => { output.findings[0].evidence.other = null; }],
     ["owner_questions", "owner_questions", (output: ReturnType<typeof turn>) => { output.ownerQuestions = [{ owner: "self", criterionIds: ["shared_objective"], question: "Unavailable private question must never appear in diagnostics." }]; }],
   ] as const)("returns a fixed safe diagnostic for invalid %s without accepting the turn", async (_label, detail, mutate) => {
     const fixture = fixtureProvider(data => { const output = turn(data); mutate(output); return output; });
@@ -234,14 +239,30 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
       const properties = body.response_format.json_schema.schema.properties;
       const references = [...new Set([...data.self.evidence, ...data.other.evidence].map(evidence => evidence.reference))];
       expect(properties).not.toHaveProperty("evidence");
-      expect(properties.findings.items.properties).not.toHaveProperty("evidenceReferences");
-      expect(properties.findings.items.properties.evidence.items.properties.reference.enum).toEqual(references);
-      expect(properties.findings.items.properties.evidence.maxItems).toBe(6);
-      expect(properties.findings.items.properties.criterionId.enum).toEqual(data.rubric.map(criterion => criterion.id));
+      expect(properties.findings.items.anyOf).toHaveLength(3);
+      for (const branch of properties.findings.items.anyOf) {
+        expect(branch.additionalProperties).toBe(false);
+        expect(branch.properties).not.toHaveProperty("evidenceReferences");
+        expect(branch.properties.criterionId.enum).toEqual(data.rubric.map(criterion => criterion.id));
+        const slots = branch.properties.evidence;
+        expect(slots.additionalProperties).toBe(false);
+        expect(slots.required).toEqual(["self", "other", "additional"]);
+        expect(slots.properties.additional.maxItems).toBe(4);
+        expect(slots.properties.additional.items.properties.reference.enum).toEqual(references);
+        if (branch.properties.status.enum[0] === "supported") {
+          expect(slots.properties.self.properties.reference.enum).toEqual(data.self.evidence.map(item => item.reference));
+          expect(slots.properties.other.properties.reference.enum).toEqual(data.other.evidence.map(item => item.reference));
+          expect(slots.properties.self).not.toHaveProperty("anyOf");
+          expect(slots.properties.other).not.toHaveProperty("anyOf");
+        } else {
+          expect(slots.properties.self.anyOf).toContainEqual({ type: "null" });
+          expect(slots.properties.other.anyOf).toContainEqual({ type: "null" });
+        }
+      }
       expect(properties.ownerQuestions.items.properties.criterionIds.items.enum).toEqual(data.rubric.map(criterion => criterion.id));
       expect(data.citationContract).toMatchObject({ allowedEvidenceReferences: references,
         inlineEvidenceRequired: true, maxCitationsPerFinding: 6, maxPooledCitations: 24, nonUnknownFindingsRequireCitations: true, supportedFindingsRequireBothParticipants: true });
-      expect(body.messages[0].content).toContain("Put exact citations directly inside each finding.evidence");
+      expect(body.messages[0].content).toContain("Put exact citations directly inside each finding.evidence.self and finding.evidence.other");
       expect(String(init?.body)).not.toContain("test-private-contact");
       expect(String(init?.body)).not.toContain("test-user-");
       return new Response(JSON.stringify({ id: "test-http-provider-receipt", model: "test-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(turn(data)) } }], usage: { prompt_tokens: 22, completion_tokens: 11 } }));
@@ -345,14 +366,68 @@ describe("bounded actual-provider qualification with test-only fixtures", () => 
   });
 
   it("requires both sides exact evidence for supported mutual criteria", async () => {
-    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[0].evidence = [{ reference: `${data.self.agentId}:intent:summary`, quote: "accessible app" }]; return output; });
+    const fixture = fixtureProvider(data => { const output = turn(data); output.findings[0].evidence.other = null; return output; });
     await expect(new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input())).rejects.toMatchObject({ code: "output" });
     expect(fixture.calls).toHaveLength(1);
   });
 
+  it("rejects copied first-turn owner slots on the reversed second turn while preserving the accepted checkpoint", async () => {
+    let accepted: QualificationCheckpoint | undefined;
+    const fixture = fixtureProvider((data, index) => {
+      const output = turn(data);
+      if (index === 1) {
+        for (const finding of output.findings) {
+          [finding.evidence.self, finding.evidence.other] = [finding.evidence.other, finding.evidence.self];
+        }
+      }
+      return output;
+    });
+    const persisted = vi.fn(event => { if (event.kind === "turn_completed") accepted = event.checkpoint; });
+    const error = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction({ ...input(), onProgress: persisted }).catch(value => value);
+    expect(qualificationOutputDiagnostic(error)).toBe("provider_task_schema");
+    expect(fixture.calls).toHaveLength(2);
+    expect(persisted).toHaveBeenCalledTimes(1);
+    expect(accepted?.messages).toHaveLength(1);
+    expect(accepted?.messages[0].agentId).toBe("test-agent-a");
+    expect(accepted?.messages[0].findings[0].evidenceReferences).toEqual(["test-agent-a:intent:summary", "test-agent-b:intent:summary"]);
+  });
+
+  it("allows explicitly unknown one-sided evidence and one-sided contradictions without manufacturing mutual support", async () => {
+    for (const status of ["unknown", "contradicted"]) {
+      const fixture = fixtureProvider(data => {
+        const output = turn(data);
+        output.ownerQuestions = [];
+        for (const finding of output.findings) {
+          finding.status = status;
+          finding.evidence.other = null;
+        }
+        return output;
+      });
+      const result = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input());
+      expect(result.state).toBe(status === "unknown" ? "needs_owner" : "not_aligned");
+      expect(result.messages.every(message => message.findings.every(finding => finding.status === status && finding.evidenceReferences.length === 1))).toBe(true);
+      expect(fixture.calls).toHaveLength(2);
+    }
+  });
+
+  it("rejects unsupported or invented additional citations instead of silently dropping them", async () => {
+    for (const kind of ["reference", "quote"]) {
+      const fixture = fixtureProvider(data => {
+        const output = turn(data);
+        output.findings[0].evidence.additional = [{ reference: kind === "reference" ? "unavailable:source" : `${data.self.agentId}:intent:summary`, quote: kind === "quote" ? "invented qualification" : "accessible app" }];
+        return output;
+      });
+      const persisted = vi.fn();
+      const error = await new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction({ ...input(), onProgress: persisted }).catch(value => value);
+      expect(qualificationOutputDiagnostic(error)).toBe(kind === "reference" ? "provider_task_schema" : "evidence");
+      expect(persisted).not.toHaveBeenCalled();
+      expect(fixture.calls).toHaveLength(1);
+    }
+  });
+
   it("rejects fabricated references and incomplete category rubrics", async () => {
     for (const malformed of ["reference", "rubric"]) {
-      const fixture = fixtureProvider(data => { const output = turn(data); if (malformed === "reference") output.findings[0].evidence[0].quote = "not in the source"; else output.findings[3] = { ...output.findings[0] }; return output; });
+      const fixture = fixtureProvider(data => { const output = turn(data); if (malformed === "reference") output.findings[0].evidence.self!.quote = "not in the source"; else output.findings[3] = { ...output.findings[0] }; return output; });
       await expect(new MeetiAgentService(fixture.provider, authorize).qualifyIntroduction(input())).rejects.toMatchObject({ code: "output" });
       expect(fixture.calls).toHaveLength(1);
     }

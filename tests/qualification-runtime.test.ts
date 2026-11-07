@@ -89,7 +89,7 @@ function modelFixture(failAt: number[] = [], price = 0, beforeReply?: (call: num
         const evidence = [data.self, data.other].map(p => ({ reference: p.evidence[0].reference, quote: calls === 1 && malformedFirstQuote ? 'UNTRUSTED_INLINE_QUOTE_NOT_IN_APPROVED_SOURCE' : p.evidence[0].value }));
         const missing = missingFirstRound && data.round === 1;
         return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-                            message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidence: missing && c.id === 'scope_expectations' ? [] : evidence })),
+                            message: 'Fixture grounded qualification', findings: data.rubric.map((c, index) => ({ criterionId: calls === 1 && duplicateFirstCriterion && index === 0 ? data.rubric[1].id : c.id, status: missing && c.id === 'scope_expectations' ? 'unknown' : 'supported', explanation: 'Fixture sources supplied by both owners.', evidence: missing && c.id === 'scope_expectations' ? { self: null, other: null, additional: [] } : { self: evidence[0], other: evidence[1], additional: [] } })),
                             peerQuestions: [], ownerQuestions: missing ? [{ owner: 'self', criterionIds: ['scope_expectations'], question: 'What scoped contribution do you offer?' }] : [], requestedFieldIds,
                         }) } }], usage: { prompt_tokens: 2, completion_tokens: 2 } }));
     });

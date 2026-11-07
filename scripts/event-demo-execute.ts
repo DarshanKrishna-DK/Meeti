@@ -18,6 +18,7 @@ import { decrypt, encrypt } from '../packages/server/crypto';
 import type { AppState } from '../packages/shared/src';
 import { EVENT_ORIGIN, EVENT_VAULT_CONTEXT, EVENT_VAULT_PATH, eventVaultSchema } from './event-demo-accounts';
 import { applyEventFundingCorrection, EVENT_CORRECTION_APPROVAL, EVENT_CORRECTION_REVIEW, FundingCorrectionError } from './event-demo-funding-correction';
+import { applyEventPolicyCorrection, EVENT_POLICY_APPROVAL, EVENT_POLICY_REVIEW, PolicyCorrectionError } from './event-demo-policy-correction';
 
 const REVIEW = 'artifacts/event-demo-testnet-review.json', APPROVAL = '.local-data/event-demo-testnet-approval.json', JOURNAL = '.local-data/event-demo-testnet-journal.enc';
 const ISSUER = getAddress('0x9253705482a44e6A7378163e57cc791AE6213ed5');
@@ -27,7 +28,7 @@ export class EventExecutionError extends Error { constructor(readonly code: stri
 export function requireEvent(value: unknown, code: string): asserts value { if (!value) throw new EventExecutionError(code); }
 type Recipient = Awaited<ReturnType<typeof buildNamespaceDemoPlan>>['recipients'][number];
 type Operation = { id: string; kind: 'funding' | 'namespace' | 'identity'; chainId: 11155111 | 7794095; from: Address; to: Address; data: Hex | null; valueWei: string; gasLimit?: string; maxFeePerGas?: string; maxPriorityFeePerGas?: string; maximumGasPriceWei?: string; maxGasCostWei: string; dependsOn: string[]; recipient?: Recipient; identityOperation?: 'register-identity' | 'publish-context' | 'set-identity-uri' | 'attest-association'; contextTemplate?: unknown };
-export type EventEntry = { id: string; state: 'preparing' | 'prepared' | 'signing' | 'signed' | 'broadcast_admitted' | 'submitted' | 'mined' | 'confirmed' | 'reverted'; envelope?: { chainId: number; from: Address; to: Address; data: Hex; valueWei: string; nonce: number; gas: string; maxFeePerGas?: string; maxPriorityFeePerGas?: string; gasPrice?: string; maxFeeWei: string }; quote?: { operationId: string; expiresAt: string; maxFeeWei: string; transaction: { chainId: number; from: Address; to: Address; data: Hex; value: string; ensName: string; gas: Hex; gasPrice: Hex } }; raw?: Hex; hash?: Hex; broadcastAttemptedAt?: string; receipt?: { blockNumber: string; blockHash: Hex; actualFeeWei: string }; balanceObservation?: { checkedAt: string; balanceWei: string }; identity?: AgentRegistryIdentity; identityPrepared?: PreparedIdentityTransaction; fundingCorrectionSha256?: string };
+export type EventEntry = { id: string; state: 'preparing' | 'prepared' | 'signing' | 'signed' | 'broadcast_admitted' | 'submitted' | 'mined' | 'confirmed' | 'reverted'; envelope?: { chainId: number; from: Address; to: Address; data: Hex; valueWei: string; nonce: number; gas: string; maxFeePerGas?: string; maxPriorityFeePerGas?: string; gasPrice?: string; maxFeeWei: string }; quote?: { operationId: string; expiresAt: string; maxFeeWei: string; transaction: { chainId: number; from: Address; to: Address; data: Hex; value: string; ensName: string; gas: Hex; gasPrice: Hex } }; raw?: Hex; hash?: Hex; broadcastAttemptedAt?: string; receipt?: { blockNumber: string; blockHash: Hex; actualFeeWei: string }; balanceObservation?: { checkedAt: string; balanceWei: string }; identity?: AgentRegistryIdentity; identityPrepared?: PreparedIdentityTransaction; fundingCorrectionSha256?: string; policyCorrectionSha256?: string };
 type Journal = { version: 1; reviewSha256: string; entries: EventEntry[] };
 type Review = { version: number; reviewOnly: boolean; fictional: boolean; humanVerified: boolean; reviewExpiresAt: string; accounts: { label: string; accountId: string; owner: Address; delegate: Address; userName: string; agentName: string }[];
   ens: { parent: { parentName: string }; branch: { parentName: string; subregistry: Address }; policyExpiresAt: string; recipients: Recipient[]; namespaceOperations: (Omit<Operation, 'kind' | 'valueWei'> & { value: string })[]; identityOperations: { id: string; operation: Operation['identityOperation']; from: Address; to: Address; data: Hex | null; maxGasCostWei: string; maxFeePerGas: string; maxPriorityFeePerGas: string; publicContextTemplate?: unknown }[]; funding: Omit<Operation, 'id' | 'kind' | 'dependsOn'>[]; balances: { address: string; balanceWei: string }[]; codeChecks: { address: Address; runtimeCodeHash: Hex }[]; issuerMaxGasAndTransferWei: string; ownerCaps: { owner: Address; totalMaxGasWei: string }[] };
@@ -62,7 +63,8 @@ export function assertEventEnvelope(entry: EventEntry, operation: Operation) {
     && (operation.data === null || envelope.data === operation.data), 'event_envelope_review_scope_changed');
   const fee = BigInt(envelope.maxFeePerGas || envelope.gasPrice!);
   requireEvent(BigInt(envelope.gas) > 0n && BigInt(envelope.gas) * fee === BigInt(envelope.maxFeeWei) && BigInt(envelope.maxFeeWei) <= BigInt(operation.maxGasCostWei), 'event_envelope_review_cap_exceeded');
-  requireEvent(operation.chainId === 11155111 ? fee <= BigInt(operation.maxFeePerGas || '500000000') && BigInt(envelope.maxPriorityFeePerGas!) <= 10000000n : fee <= BigInt(operation.maximumGasPriceWei!), 'event_envelope_gas_price_exceeded');
+  requireEvent(operation.chainId === 11155111 ? fee > 0n && fee <= BigInt(operation.maxFeePerGas || '500000000') && BigInt(envelope.maxPriorityFeePerGas!) >= 0n
+    && BigInt(envelope.maxPriorityFeePerGas!) <= BigInt(operation.maxPriorityFeePerGas || '10000000') && BigInt(envelope.maxPriorityFeePerGas!) <= fee : fee > 0n && fee <= BigInt(operation.maximumGasPriceWei!), 'event_envelope_gas_price_exceeded');
   if (operation.gasLimit) requireEvent(BigInt(envelope.gas) <= BigInt(operation.gasLimit), 'event_envelope_gas_limit_exceeded');
 }
 function operations(review: Review): Operation[] {
@@ -103,7 +105,7 @@ export function validateEventApproval(review: Review, reviewHash: string, approv
 async function main() {
   const mode = process.argv[2], argument = (name: string) => process.argv.find(value => value.startsWith(`--${name}=`))?.slice(name.length + 3);
   requireEvent(['inspect', 'execute', 'reconcile'].includes(mode || ''), 'choose_event_inspect_execute_or_reconcile');
-  requireEvent(process.argv.slice(3).every(value => /^--(review-sha256|operation-id|funding-correction-sha256)=.+$/.test(value)) && process.argv.filter(value => value.startsWith('--review-sha256=')).length === 1 && process.argv.filter(value => value.startsWith('--operation-id=')).length <= 1 && process.argv.filter(value => value.startsWith('--funding-correction-sha256=')).length <= 1, 'event_exact_cli_arguments_required');
+  requireEvent(process.argv.slice(3).every(value => /^--(review-sha256|operation-id|funding-correction-sha256|policy-correction-sha256)=.+$/.test(value)) && process.argv.filter(value => value.startsWith('--review-sha256=')).length === 1 && process.argv.filter(value => value.startsWith('--operation-id=')).length <= 1 && process.argv.filter(value => value.startsWith('--funding-correction-sha256=')).length <= 1 && process.argv.filter(value => value.startsWith('--policy-correction-sha256=')).length <= 1, 'event_exact_cli_arguments_required');
   const rawReview = readFileSync(REVIEW, 'utf8'), reviewHash = sha(rawReview), review = JSON.parse(rawReview) as Review; let all = operations(review);
   requireEvent(argument('review-sha256') === reviewHash, 'exact_event_review_hash_required');
   const context = `meeti-event-testnet-journal-v1:${reviewHash}`;
@@ -115,7 +117,17 @@ async function main() {
       correctionRaw: readFileSync(EVENT_CORRECTION_REVIEW, 'utf8'), correctionHash, requireApproval: mode !== 'inspect', ...(existsSync(EVENT_CORRECTION_APPROVAL) ? { approval: JSON.parse(readFileSync(EVENT_CORRECTION_APPROVAL, 'utf8')) } : {}) });
     all = corrected.operations; correctionExpiry = corrected.expiresAt; correctedIds = corrected.targetedIds;
   }
-  if (mode === 'inspect') { console.log(JSON.stringify({ reviewSha256: reviewHash, operationCount: all.length, approvalPresent: existsSync(APPROVAL), fundingCorrection: correctionHash ? { hash: correctionHash, approvalPresent: existsSync(EVENT_CORRECTION_APPROVAL), transfers: all.filter(operation => correctedIds.includes(operation.id)).map(({ id, gasLimit, maxFeePerGas, maxGasCostWei }) => ({ id, gasLimit, maxFeePerGas, maxGasCostWei })) } : null, entries: journal.entries.map(({ id, state, hash, receipt }) => ({ id, state, hash, receipt })), signatures: 0, broadcasts: 0 })); return; }
+  const policyCorrectionHash = argument('policy-correction-sha256'); let policyCorrectionExpiry: string | undefined, correctedPolicyIds: string[] = [];
+  requireEvent(!journal.entries.some(entry => entry.policyCorrectionSha256) || policyCorrectionHash, 'event_existing_policy_correction_requires_exact_overlay');
+  if (policyCorrectionHash) {
+    requireEvent(correctionHash, 'event_policy_overlay_requires_approved_funding_overlay');
+    const corrected = applyEventPolicyCorrection({ baseReviewSha256: reviewHash, fundingCorrectionSha256: correctionHash, originalExpiresAt: review.reviewExpiresAt, operations: all, entries: journal.entries,
+      correctionRaw: readFileSync(EVENT_POLICY_REVIEW, 'utf8'), correctionHash: policyCorrectionHash, requireApproval: mode !== 'inspect', ...(existsSync(EVENT_POLICY_APPROVAL) ? { approval: JSON.parse(readFileSync(EVENT_POLICY_APPROVAL, 'utf8')) } : {}) });
+    all = corrected.operations; policyCorrectionExpiry = corrected.expiresAt; correctedPolicyIds = corrected.targetedIds;
+  }
+  if (mode === 'inspect') { console.log(JSON.stringify({ reviewSha256: reviewHash, operationCount: all.length, approvalPresent: existsSync(APPROVAL), fundingCorrection: correctionHash ? { hash: correctionHash, approvalPresent: existsSync(EVENT_CORRECTION_APPROVAL), transfers: all.filter(operation => correctedIds.includes(operation.id)).map(({ id, gasLimit, maxFeePerGas, maxGasCostWei }) => ({ id, gasLimit, maxFeePerGas, maxGasCostWei })) } : null,
+    policyCorrection: policyCorrectionHash ? { hash: policyCorrectionHash, approvalPresent: existsSync(EVENT_POLICY_APPROVAL), policies: all.filter(operation => correctedPolicyIds.includes(operation.id)).map(({ id, gasLimit, maxFeePerGas, maxGasCostWei }) => ({ id, gasLimit, maxFeePerGas, maxGasCostWei })) } : null,
+    entries: journal.entries.map(({ id, state, hash, receipt }) => ({ id, state, hash, receipt })), signatures: 0, broadcasts: 0 })); return; }
   const approval = validateEventApproval(review, reviewHash, JSON.parse(readFileSync(APPROVAL, 'utf8')));
   if (mode === 'execute') admitEventDeadline(review.reviewExpiresAt);
   const targetId = argument('operation-id'); requireEvent(!targetId || all.some(operation => operation.id === targetId), 'event_unknown_selected_operation');
@@ -239,7 +251,7 @@ async function main() {
     try {
       await codeAndParent();
       for (const operation of selected) {
-        const admissionExpiry = correctedIds.includes(operation.id) ? correctionExpiry! : review.reviewExpiresAt;
+        const admissionExpiry = correctedPolicyIds.includes(operation.id) ? policyCorrectionExpiry! : correctedIds.includes(operation.id) ? correctionExpiry! : review.reviewExpiresAt;
         activeId = operation.id; let entry = journal.entries.find(item => item.id === operation.id);
         if (entry?.raw && (entry.broadcastAttemptedAt || entry.state === 'confirmed' || mode === 'reconcile')) { await reconcile(operation, entry); continue; }
         if (mode === 'reconcile') continue;
@@ -261,7 +273,7 @@ async function main() {
           const estimate = await rpc.estimateGas({ account: operation.from, to: operation.to, data: prepared.data, value: BigInt(operation.valueWei) });
           if (operation.chainId === 11155111) {
             if (operation.kind === 'funding') { gas = BigInt(operation.gasLimit!); requireEvent(estimate <= gas, 'event_funding_estimate_exceeds_transfer_cap'); maxFee = BigInt(operation.maxFeePerGas!); priority = BigInt(operation.maxPriorityFeePerGas!); }
-            else { const envelope = boundedFundingEnvelope({ estimatedGas: estimate, maxGasCostWei: BigInt(operation.maxGasCostWei), reviewedMaxFeePerGas: 500000000n, reviewedMaxPriorityFeePerGas: 10000000n, baseFeePerGas: head.baseFeePerGas || 0n }); gas = envelope.gas; maxFee = envelope.maxFeePerGas; priority = envelope.maxPriorityFeePerGas; requireEvent(gas <= BigInt(operation.gasLimit!), 'event_namespace_estimate_exceeds_review_gas'); }
+            else { const envelope = boundedFundingEnvelope({ estimatedGas: estimate, maxGasCostWei: BigInt(operation.maxGasCostWei), reviewedMaxFeePerGas: BigInt(operation.maxFeePerGas!), reviewedMaxPriorityFeePerGas: BigInt(operation.maxPriorityFeePerGas!), baseFeePerGas: head.baseFeePerGas || 0n }); gas = envelope.gas; maxFee = envelope.maxFeePerGas; priority = envelope.maxPriorityFeePerGas; requireEvent(gas <= BigInt(operation.gasLimit!), 'event_namespace_estimate_exceeds_review_gas'); }
           }
           else { gas = BigInt(operation.gasLimit!); maxFee = await rpc.getGasPrice(); requireEvent(estimate <= gas && gas <= head.gasLimit / 2n && maxFee <= BigInt(operation.maximumGasPriceWei!) && gas * maxFee <= BigInt(operation.maxGasCostWei), 'event_rabdi_funding_envelope_changed'); }
         }
@@ -273,8 +285,10 @@ async function main() {
           requireEvent(entry.state === 'preparing' || entry.state === 'prepared', 'event_unknown_signing_state');
           await codeAndParent(); const beforeSign = await materialize(operation, entry);
           requireEvent(beforeSign.data === prepared.data && same(beforeSign.from, operation.from) && same(beforeSign.to, operation.to), 'event_authority_or_preparation_changed_before_signing');
-          entry.envelope = { chainId: operation.chainId, from: operation.from, to: operation.to, data: prepared.data, valueWei: operation.valueWei, nonce, gas: gas.toString(), ...(operation.chainId === 11155111 ? { maxFeePerGas: maxFee.toString(), maxPriorityFeePerGas: priority!.toString() } : { gasPrice: maxFee.toString() }), maxFeeWei: (gas * maxFee).toString() }; entry.state = 'signing'; save();
-          if (correctedIds.includes(operation.id)) { entry.fundingCorrectionSha256 = correctionHash; save(); }
+          entry.envelope = { chainId: operation.chainId, from: operation.from, to: operation.to, data: prepared.data, valueWei: operation.valueWei, nonce, gas: gas.toString(), ...(operation.chainId === 11155111 ? { maxFeePerGas: maxFee.toString(), maxPriorityFeePerGas: priority!.toString() } : { gasPrice: maxFee.toString() }), maxFeeWei: (gas * maxFee).toString() };
+          if (correctedIds.includes(operation.id)) entry.fundingCorrectionSha256 = correctionHash;
+          if (correctedPolicyIds.includes(operation.id)) entry.policyCorrectionSha256 = policyCorrectionHash;
+          entry.state = 'signing'; save();
           admitEventDeadline(admissionExpiry, entry.quote?.expiresAt); const account = accounts.get(operation.from.toLowerCase()); requireEvent(account, 'event_unapproved_sender');
           entry.raw = operation.chainId === 11155111 ? await account.signTransaction({ type: 'eip1559', chainId: 11155111, nonce, to: operation.to, data: prepared.data, value: BigInt(operation.valueWei), gas, maxFeePerGas: maxFee, maxPriorityFeePerGas: priority! }) : await account.signTransaction({ type: 'legacy', chainId: 7794095, nonce, to: operation.to, data: prepared.data, value: BigInt(operation.valueWei), gas, gasPrice: maxFee }); entry.hash = keccak256(entry.raw); entry.state = 'signed'; save();
         }
@@ -301,4 +315,4 @@ async function main() {
   } catch (error) { console.error(JSON.stringify({ operation: activeId, code: error instanceof EventExecutionError ? error.code : 'event_execution_stopped_preserve_private_journal', replacementOrResendAttempted: false })); process.exitCode = 1; }
   finally { closeSync(lock); unlinkSync(lockPath); }
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main().catch(error => { console.error(error instanceof EventExecutionError || error instanceof FundingCorrectionError ? error.code : 'event_execution_startup_failed_no_private_diagnostics'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main().catch(error => { console.error(error instanceof EventExecutionError || error instanceof FundingCorrectionError || error instanceof PolicyCorrectionError ? error.code : 'event_execution_startup_failed_no_private_diagnostics'); process.exitCode = 1; });

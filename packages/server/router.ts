@@ -1,10 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { verifyMessage } from 'viem';
+import { getAddress, verifyMessage } from 'viem';
 import { agent, atomic, audit, db, intent, profile, saveAgent, saveIntent, type IntentRow, type UserRow } from './store';
 import { decrypt, encrypt, hash, hashPassword, verifyPassword } from './crypto';
 import { checkOrigin, createSession, HttpError, rateLimit, readBody, requireUser, requireValue, sessionTokenHash } from './security';
 import { enqueueAgentTask, readAgentTask, listAgentTasks } from './agent-tasks';
+import { parseEnsFeeCap, quoteEnsTransactionFees, verifyEnsReceiptFee } from './ens-fee-quote';
 import { addressSchema, agentSchema, goalSchema, hexSchema, intentInputSchema, profileSchema, tagsSchema } from './validation';
 import { ai, arkiv, assertIntent, authority, ensProvider, policyDigest, publicIntent, inferenceProvider } from './policy';
 import { consent, createProposal, openRoom, ownedProposal, proposalDtos, roomAccess, assertPair, validatePair } from './proposals';
@@ -337,11 +338,12 @@ export async function route(request: Request, path: string[]): Promise<Response>
             });
         }
         if (key === 'agent/transaction') {
-            const input = z.object({ operation: z.enum(['deploy-registry', 'set-subregistry', 'create-subname', 'deploy-resolver', 'set-resolver', 'set-policy', 'grant', 'revoke', 'update-status']), value: z.string().max(2048).optional(), expiresAt: z.number().int().positive().optional() }).strict().parse(body);
+            const input = z.object({ operation: z.enum(['deploy-registry', 'set-subregistry', 'create-subname', 'deploy-resolver', 'set-resolver', 'set-policy', 'grant', 'revoke', 'update-status']), value: z.string().max(2048).optional(), expiresAt: z.number().int().positive().optional(), maxFeeWei: z.string() }).strict().parse(body);
+            parseEnsFeeCap(input.maxFeeWei);
             const value = requireValue(await agent(actor.id), 'Set up your agent.');
             let text = input.value;
             if (input.operation === 'set-policy') {
-                text = JSON.stringify({ version: String(value.policy.version), ensName: value.ensName, owner: value.owner, delegate: value.delegate,
+                text = JSON.stringify({ version: String(value.policy.version), ensName: value.ensName, owner: getAddress(value.owner), delegate: getAddress(value.delegate),
                     digest: policyDigest(value.policy), uri: value.config.policyUri || encodeInlinePolicyUri(value.policy), expiresAt: Math.floor(Date.parse(value.policy.expiresAt) / 1000), actions: [...value.policy.allowedActions, 'update-status'], resolverScope: 'dedicated-agent' });
             }
             if (input.operation === 'update-status' && !text?.trim()) {
@@ -350,12 +352,13 @@ export async function route(request: Request, path: string[]): Promise<Response>
                     policyVersion: value.policy.version, policyDigest: policyDigest(value.policy) });
             }
             const transaction = await ensProvider(value).prepareTransaction({ operation: input.operation as EnsOperation, ensName: value.ensName, owner: value.owner, delegate: value.delegate, value: text, expiresAt: input.expiresAt });
-            const reviewed = { ...transaction, ...(text ? { publicRecordPreview: { key: input.operation === 'set-policy' ? 'network.agent.policy' : 'network.agent.status', value: text } } : {}) };
+            const quote = await quoteEnsTransactionFees(transaction, input.maxFeeWei);
+            const reviewed = { ...transaction, gas: quote.gas, maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas, type: quote.type, ...(text ? { publicRecordPreview: { key: input.operation === 'set-policy' ? 'network.agent.policy' : 'network.agent.status', value: text } } : {}) };
             return await atomic(async () => {
                 await checkSession();
                 requireAgentSnapshot(value, requireValue(await agent(actor.id), 'Agent unavailable.'));
-                const operationId = await saveOperation(actor.id, 'ens', { transaction: reviewed, policyDigest: policyDigest(value.policy) });
-                return ok({ operationId, transaction: reviewed });
+                const operationId = await saveOperation(actor.id, 'ens', { transaction: reviewed, policyDigest: policyDigest(value.policy), maxFeeWei: quote.maxFeeWei, expiresAt: quote.expiresAt });
+                return ok({ operationId, transaction: reviewed, maxFeeWei: quote.maxFeeWei, expiresAt: quote.expiresAt, quotedMaximumFeeWei: quote.quotedMaximumFeeWei });
             });
         }
         if (key === 'agent/confirm') {
@@ -372,28 +375,34 @@ export async function route(request: Request, path: string[]): Promise<Response>
                     predictedAddress?: string;
                 };
                 policyDigest: string;
-                submittedHash?: string;
+                submittedHash?: string; maxFeeWei?: string; expiresAt?: string;
             }>(row.data, `operation:${row.id}`);
             if (stored.submittedHash && stored.submittedHash.toLowerCase() !== input.hash.toLowerCase())
                 throw new HttpError(409, 'TRANSACTION_MISMATCH', 'Confirm the transaction already recorded for this operation.');
+            if (!stored.maxFeeWei || !stored.expiresAt) throw new HttpError(409, 'ENS_FEE_REVIEW_REQUIRED', 'This older preparation has no recorded fee cap. Its receipt needs a separate explicit review. Do not resend it. Cancel only if it was never submitted.');
+            parseEnsFeeCap(stored.maxFeeWei);
             const result = await ensProvider(value).confirmTransaction({ hash: input.hash as `0x${string}`, expectedFrom: stored.transaction.from, expectedTo: stored.transaction.to, expectedData: stored.transaction.data });
+            const actualFeeWei = await verifyEnsReceiptFee(input.hash as `0x${string}`, stored.maxFeeWei, result.blockNumber);
             return await atomic(async () => {
                 await checkSession();
                 const current = requireValue(await agent(actor.id), 'Agent unavailable.');
                 requireAgentSnapshot(value, current);
                 const currentOperation = await operation(actor.id, row.id, 'ens');
                 const currentStored = decrypt<{
-                    submittedHash?: string;
+                    submittedHash?: string; maxFeeWei?: string; expiresAt?: string;
+                    transaction?: unknown; policyDigest?: string;
                 }>(currentOperation.data, `operation:${row.id}`);
                 if (currentStored.submittedHash && currentStored.submittedHash.toLowerCase() !== input.hash.toLowerCase())
                     throw new HttpError(409, 'TRANSACTION_MISMATCH', 'Confirm the transaction already recorded for this operation.');
+                if (currentStored.maxFeeWei !== stored.maxFeeWei || currentStored.expiresAt !== stored.expiresAt) throw new HttpError(409, 'ENS_FEE_REVIEW_CHANGED', 'The saved fee review changed during confirmation.');
+                if (hash(JSON.stringify(currentStored.transaction)) !== hash(JSON.stringify(stored.transaction)) || currentStored.policyDigest !== stored.policyDigest) throw new HttpError(409, 'OPERATION_CONFLICT', 'The immutable transaction review changed during confirmation.');
                 if (!['prepared', 'submitted', 'confirmed'].includes(currentOperation.state))
                     throw new HttpError(409, 'OPERATION_CONFLICT', 'The operation changed during confirmation.');
                 await db().prepare('UPDATE operations SET state=? WHERE id=?').run('confirmed', row.id);
                 if (stored.transaction.operation === 'deploy-resolver' && stored.transaction.predictedAddress && stored.transaction.ensName === current.ensName)
                     await saveAgent(actor.id, { ...current, config: { ...current.config, resolverAddress: stored.transaction.predictedAddress } });
                 await audit(actor.id, 'ens_transaction', 'confirmed', input.hash);
-                return ok(result);
+                return ok({ ...result, actualFeeWei, maxFeeWei: stored.maxFeeWei });
             });
         }
         if (key === 'intent/structure' || key === 'profile/structure') {

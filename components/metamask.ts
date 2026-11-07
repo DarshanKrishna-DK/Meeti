@@ -31,3 +31,18 @@ export function wallet(): InjectedWallet {
   if (eligible.length === 1) { selected = eligible[0]; return selected; }
   throw new Error('Connect MetaMask before continuing.');
 }
+
+/** Preserve the server-quoted fee fields. This check does not submit or sign anything. */
+export function boundedEnsWalletRequest(raw: Record<string, unknown>, maxFeeWei: string, expiresAt: string, now = Date.now()) {
+  if (!/^[1-9][0-9]{0,14}$/.test(maxFeeWei) || BigInt(maxFeeWei) > 500000000000000n
+    || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= now) throw new Error('Review a fresh ENS transaction with an explicit fee limit before wallet approval.');
+  if (Number(raw.chainId) !== 11155111 || typeof raw.from !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(raw.from)
+    || typeof raw.to !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(raw.to) || typeof raw.data !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw.data)
+    || raw.value !== '0x0' || typeof raw.gas !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw.gas)
+    || typeof raw.maxFeePerGas !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw.maxFeePerGas)
+    || typeof raw.maxPriorityFeePerGas !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw.maxPriorityFeePerGas)
+    || raw.gasPrice !== undefined || raw.type !== '0x2') throw new Error('The ENS wallet request is missing its exact Sepolia fee quote.');
+  const gas = BigInt(raw.gas), gasPrice = BigInt(raw.maxFeePerGas), priority = BigInt(raw.maxPriorityFeePerGas);
+  if (gas <= 0n || gasPrice <= 0n || gasPrice > 500000000n || priority < 0n || priority > 10000000n || priority > gasPrice || gas * gasPrice > BigInt(maxFeeWei)) throw new Error('The ENS wallet request exceeds its reviewed maximum fee.');
+  return raw;
+}

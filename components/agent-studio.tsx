@@ -13,6 +13,7 @@ import { IdentitySetup } from './identity-setup';
 import { NameClaimPanel } from './namespace-claims';
 import { confirmedName, type NameClaim } from './setup-state';
 import styles from './context-library.module.css';
+import { boundedEnsWalletRequest } from './metamask';
 
 type AgentDraft = {
   ensName: string;
@@ -45,7 +46,7 @@ const operations = [
 
 function localDateTime(value: string) {
   const date = new Date(value);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 23);
 }
 
 function savedDraft(agent: Agent | null, defaultExpiry: string): AgentDraft {
@@ -87,7 +88,7 @@ function AccountAgentStudio({ state, run, busy, refresh }: Shared) {
   const conflict = draft !== null && base !== fingerprint;
   const [operation, setOperation] = useState('grant');
   const [value, setValue] = useState('');
-  const [prepared, setPrepared] = useState<{ operationId: string; transaction: Record<string, unknown>; snapshot: string } | null>(null);
+  const [prepared, setPrepared] = useState<{ operationId: string; transaction: Record<string, unknown>; snapshot: string; maxFeeWei: string; expiresAt: string } | null>(null);
   const [sendAttempted, setSendAttempted] = useState(false);
   const [history, setHistory] = useState<PolicySnapshot[] | null>(null);
   const [nameMessage, setNameMessage] = useState('');
@@ -162,7 +163,7 @@ function AccountAgentStudio({ state, run, busy, refresh }: Shared) {
           <Field label="Public personality"><textarea rows={3} value={form.persona} onChange={event => update('persona', event.target.value)} placeholder="How should your representative introduce itself?" /></Field>
           <details><summary>Advanced record settings</summary><Field label="Resolver address"><input value={form.resolverAddress} onChange={event => update('resolverAddress', event.target.value)} placeholder="0x..." autoCapitalize="none" spellCheck={false} /></Field><Field label="Policy URI" hint="Optional HTTPS reference. Leave blank to embed approved permission classes in ENS."><input value={form.policyUri} onChange={event => update('policyUri', event.target.value)} placeholder="https://..." autoCapitalize="none" spellCheck={false} /></Field></details>
           </details>
-          <div className="two-fields"><Field label="Active policy purpose" hint="This single purpose must match the networking intent. Other purposes need an explicit policy change."><select value={form.purpose} onChange={event => update('purpose', event.target.value as Goal)}>{purposes.map(purpose => <option key={purpose} value={purpose}>{purposeLabels[purpose]}</option>)}</select></Field><Field label="Permission expires" hint="Expiry is checked again for each protected action."><input required type="datetime-local" value={form.expiry} onChange={event => update('expiry', event.target.value)} /></Field></div>
+          <div className="two-fields"><Field label="Active policy purpose" hint="This single purpose must match the networking intent. Other purposes need an explicit policy change."><select value={form.purpose} onChange={event => update('purpose', event.target.value as Goal)}>{purposes.map(purpose => <option key={purpose} value={purpose}>{purposeLabels[purpose]}</option>)}</select></Field><Field label="Permission expires" hint="Expiry is checked again for each protected action."><input required type="datetime-local" step="0.001" value={form.expiry} onChange={event => update('expiry', event.target.value)} /></Field></div>
           <Checkline checked={form.paused} onChange={paused => update('paused', paused)}>Keep this policy paused after saving.</Checkline>
 
           <details className="form-section"><summary>Customize actions and sharing</summary>
@@ -187,17 +188,18 @@ function AccountAgentStudio({ state, run, busy, refresh }: Shared) {
     <section id="agent-transactions" className="panel form-panel transaction-panel"><details className="advanced-agent" open={Boolean(agent && !agent.authority?.allowed)}><summary>Complete agent registration and permissions</summary>
       <fieldset className={styles.fieldset} disabled={busy}>
       <div className="panel-title"><div><h2>Manage permission at its source.</h2><p className="small-copy">Actual ENSv2 wallet actions on Sepolia.</p></div><Tag>Wallet approval required</Tag></div>
-      <p>Choose an action, inspect its exact transaction and approve it in your wallet. Network fees may apply.</p>
+      <p>Choose an action, inspect its exact transaction and approve it in your wallet. Each new preparation requests a maximum fee of 0.0005 Sepolia test ETH. A fresh quote must fit that limit before wallet approval.</p>
       {draft && <p className="draft-warning" role="status">Save or discard your agent draft before preparing a chain operation. The transaction must use the saved identity and policy.</p>}
       <div className="two-fields"><Field label="Operation"><select value={operation} onChange={event => { setOperation(event.target.value); setPrepared(null); }}>{operations.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field><Field label="Value or record input" hint="Used only when the selected action requires a value."><input value={value} onChange={event => { setValue(event.target.value); setPrepared(null); }} placeholder={operation === 'update-status' ? 'A public agent status' : 'As required by this action'} /></Field></div>
       <Button kind="secondary" disabled={busy || !agent || !!draft} onClick={() => void run(async () => {
-        const response = await api<{ operationId: string; transaction: Record<string, unknown> }>('agent/transaction', { operation, value, expiresAt: operation === 'create-subname' ? Math.floor(new Date(form.expiry).getTime() / 1000) : undefined });
+        const response = await api<{ operationId: string; transaction: Record<string, unknown>; maxFeeWei: string; expiresAt: string }>('agent/transaction', { operation, value, expiresAt: operation === 'create-subname' ? Math.floor(new Date(form.expiry).getTime() / 1000) : undefined, maxFeeWei: '500000000000000' });
         setPrepared({ ...response, snapshot: chainSnapshot });
         setSendAttempted(false);
       })}>Prepare transaction<ArrowIcon /></Button>
-      {prepared && <div className="transaction-preview"><h3>Review before signing.</h3><p className="small-copy">This review does not submit anything. Check the network, account, destination and fee before continuing.</p>{prepared.snapshot !== chainSnapshot && <p className="draft-warning">Saved agent settings changed after preparation. Review the latest settings before requesting a new transaction.</p>}<details open><summary>Exact transaction details</summary><pre>{JSON.stringify(prepared.transaction, null, 2)}</pre></details><Button disabled={busy || !!draft || sendAttempted || prepared.snapshot !== chainSnapshot} onClick={() => void run(async () => {
+      {prepared && <div className="transaction-preview"><h3>Review before signing.</h3><p>Maximum fee: {Number(prepared.maxFeeWei)/1e18} Sepolia test ETH. Review expires {new Date(prepared.expiresAt).toLocaleString()}.</p><p className="small-copy">This review does not submit anything. Check the network, account, destination and fee before continuing.</p>{prepared.snapshot !== chainSnapshot && <p className="draft-warning">Saved agent settings changed after preparation. Review the latest settings before requesting a new transaction.</p>}<details open><summary>Exact transaction details</summary><pre>{JSON.stringify(prepared.transaction, null, 2)}</pre></details><Button disabled={busy || !!draft || sendAttempted || prepared.snapshot !== chainSnapshot} onClick={() => void run(async () => {
+        const request = boundedEnsWalletRequest((prepared.transaction.request || prepared.transaction) as Record<string, unknown>, prepared.maxFeeWei, prepared.expiresAt);
         setSendAttempted(true);
-        const hash = await submitTransaction(prepared.operationId, (prepared.transaction.request || prepared.transaction) as Record<string, unknown>);
+        const hash = await submitTransaction(prepared.operationId, request);
         await api('agent/confirm', { operationId: prepared.operationId, hash });
         setPrepared(null);
       }, 'Transaction submitted for confirmation.')}>Approve in wallet and send<ExternalLink size={15} /></Button>{sendAttempted && <p className="small-copy form-endnote">A wallet request was made. If its result is uncertain, reconcile the existing transaction in Settings before preparing another.</p>}</div>}
