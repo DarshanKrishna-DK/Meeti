@@ -113,8 +113,12 @@ async function call<T>(label: Label, path: string, body?: unknown, timeoutMs = r
   if (explicitTarget && !session && path !== 'health') throw new DemoError('EXPLICIT_REAUTHENTICATION_REQUIRED');
   const response = await fetch(`${origin}/api/${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(timeoutMs),
     headers: { origin, 'content-type': 'application/json', ...(session ? { cookie: session } : {}) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  const result = await response.json() as { data: T; error?: { code: string; message?: string } };
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).catch(error => {
+      const code = error?.cause?.code;
+      const known = ['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'ECONNRESET', 'ENOTFOUND'];
+      throw new DemoError(error?.name === 'TimeoutError' ? 'HTTP_CLIENT_TIMEOUT' : known.includes(code) ? `HTTP_TRANSPORT_${code}` : 'HTTP_TRANSPORT_FAILED');
+    });
+  const result = await response.json().catch(() => { throw new DemoError(`HTTP_${response.status}_NON_JSON_RESPONSE`); }) as { data: T; error?: { code: string; message?: string } };
   if (!response.ok) {
     if (explicitTarget && response.status === 401) throw new DemoError('EXPLICIT_REAUTHENTICATION_REQUIRED');
     const safeOutputReasons: Record<string, string> = {

@@ -290,6 +290,62 @@ describe('persisted qualification boundaries with fixture providers', () => {
         expect(transport).toHaveBeenCalledTimes(1);
         expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
     });
+    it.each([
+        [400, 'json_validate_failed', true],
+        [401, 'invalid_api_key', false],
+        [429, 'rate_limit_exceeded', true],
+        [503, 'service_unavailable', true],
+    ] as const)('persists allowlisted HTTP %s provider diagnostics without changing retry decisions', async (status, code, canRetry) => {
+        const secret = 'PRIVATE_PROVIDER_RESPONSE_AND_SUBMITTED_CONTEXT';
+        const transport = modelFixture([], 0, async () => { throw new AgentError('provider', secret, { status, code }); });
+        await expect(start()).rejects.toMatchObject({ code: 'provider' });
+        const dto = (await listQualificationDtos(left.id))[0], saved = (await qualificationRecord(dto.id))!;
+        const failureCode = `AGENT_provider_http_${status}_${code}`;
+        expect(dto).toMatchObject({ state: 'blocked', failureCode, canRetry, attemptsUsed: 1 });
+        expect(saved.value.failureCode).toBe(failureCode);
+        expect(saved.value.attempts).toHaveLength(1); expect(saved.value.messages).toEqual([]);
+        expect(JSON.stringify({ dto, saved: saved.value })).not.toContain(secret);
+        expect(transport).toHaveBeenCalledOnce();
+        expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
+    });
+    it('retains an accepted turn and its original budget when a later provider failure has safe diagnostics', async () => {
+        const transport = modelFixture([], 0, async call => {
+            if (call === 2) throw new AgentError('provider', 'PRIVATE_SECOND_TURN_RESPONSE', { status: 503, code: 'server_error' });
+        });
+        await expect(start()).rejects.toMatchObject({ code: 'provider' });
+        const dto = (await listQualificationDtos(left.id))[0], saved = (await qualificationRecord(dto.id))!;
+        expect(dto).toMatchObject({ state: 'blocked', failureCode: 'AGENT_provider_http_503_server_error', canRetry: true, attemptsUsed: 2 });
+        expect(saved.value.messages).toHaveLength(1); expect(saved.value.attempts).toHaveLength(2);
+        expect(saved.value.messages[0].inference.requestId).toBe(saved.value.attempts![0].requestId);
+        expect(saved.value.checkpoint!.messages).toEqual(saved.value.messages);
+        expect(JSON.stringify({ dto, saved: saved.value })).not.toContain('PRIVATE_SECOND_TURN_RESPONSE');
+        expect(transport).toHaveBeenCalledTimes(2);
+        expect(db().prepare('SELECT id FROM proposals').all()).toEqual([]);
+    });
+    it('retains only a valid HTTP status when an actual AgentError contains an unallowlisted provider code', async () => {
+        const secret = 'PRIVATE_UNKNOWN_PROVIDER_CODE';
+        const transport = modelFixture([], 0, async () => {
+            throw new AgentError('provider', `${secret} rate_limit_exceeded`, { status: 599, code: `${secret}_rate_limit_exceeded` });
+        });
+        await expect(start()).rejects.toMatchObject({ code: 'provider' });
+        const dto = (await listQualificationDtos(left.id))[0], saved = (await qualificationRecord(dto.id))!;
+        expect(dto).toMatchObject({ failureCode: 'AGENT_provider_http_599', canRetry: true, attemptsUsed: 1 });
+        expect(saved.value.failureCode).toBe('AGENT_provider_http_599');
+        expect(JSON.stringify({ dto, saved: saved.value })).not.toContain(secret);
+        expect(transport).toHaveBeenCalledOnce();
+    });
+    it.each([399, 600, 500.5, Number.NaN, Number.POSITIVE_INFINITY, '429'])('rejects malformed provider HTTP metadata %s without parsing its message', async (status) => {
+        const secret = 'PRIVATE_HTTP_METADATA_OR_PROMPT';
+        const transport = modelFixture([], 0, async () => {
+            throw new AgentError('provider', `${secret} HTTP 429 (rate_limit_exceeded)`, { status: status as number, code: 'rate_limit_exceeded' });
+        });
+        await expect(start()).rejects.toMatchObject({ code: 'provider' });
+        const dto = (await listQualificationDtos(left.id))[0], saved = (await qualificationRecord(dto.id))!;
+        expect(dto.failureCode).toBe('AGENT_provider'); expect(saved.value.failureCode).toBe('AGENT_provider');
+        expect(saved.value.attempts).toHaveLength(1); expect(saved.value.messages).toEqual([]);
+        expect(JSON.stringify({ dto, saved: saved.value })).not.toContain(secret);
+        expect(transport).toHaveBeenCalledOnce();
+    });
     it('reports optional legacy absence honestly and never treats it as registration or human verification', async () => {
         await start();
         const dto = (await listQualificationDtos(left.id))[0];

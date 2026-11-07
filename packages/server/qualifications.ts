@@ -114,6 +114,18 @@ function costLimit() { return Math.min(0.05, Number(process.env.AI_MAX_COST_USD 
 function remaining(value: QualificationData) {
     return Boolean(value.attempts && value.attempts.length < maxAttempts && value.attempts.reduce((sum, attempt) => sum + attempt.reservedCostUsd, 0) < costLimit());
 }
+const persistedProviderCodes = new Set([
+    'json_validate_failed', 'rate_limit_exceeded', 'insufficient_quota', 'invalid_api_key',
+    'model_not_found', 'model_decommissioned', 'context_length_exceeded', 'invalid_request_error',
+    'authentication_error', 'permission_error', 'server_error', 'service_unavailable',
+]);
+function providerFailureDiagnostic(error: AgentError): string | null {
+    const detail = error.providerDetail;
+    if (error.code !== 'provider' || !detail || !Number.isInteger(detail.status) || detail.status < 400 || detail.status > 599) return null;
+    // Revalidate metadata at persistence. Messages and unknown upstream codes are never stored.
+    const code = typeof detail.code === 'string' && persistedProviderCodes.has(detail.code) ? detail.code : undefined;
+    return `http_${detail.status}${code ? `_${code}` : ''}`;
+}
 function canRetry(value: QualificationData) {
     // Older raw provider read failures lacked a retry classification. A manual retry still
     // rechecks current state, live authority and the original durable request budget.
@@ -354,8 +366,8 @@ async function execute(userId: string, id: string, version: number, checkSession
         }
         const record = await owned(userId, id);
         if (record.row.state === 'running' && record.row.lease_token === token) {
-            const outputDiagnostic = qualificationOutputDiagnostic(error);
-            record.value.failureCode = error instanceof HttpError ? error.code : error instanceof AgentError ? `AGENT_${error.code}${outputDiagnostic ? `_${outputDiagnostic}` : ''}` : 'PROVIDER_UNAVAILABLE';
+            const diagnostic = qualificationOutputDiagnostic(error) || (error instanceof AgentError ? providerFailureDiagnostic(error) : null);
+            record.value.failureCode = error instanceof HttpError ? error.code : error instanceof AgentError ? `AGENT_${error.code}${diagnostic ? `_${diagnostic}` : ''}` : 'PROVIDER_UNAVAILABLE';
             record.value.retryable = retryableFailure(error) && Boolean(record.value.attempts && remaining(record.value));
             await persist(record, 'blocked');
             await db().prepare('UPDATE qualifications SET lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?').run(id, token);
